@@ -322,6 +322,11 @@ def load_and_prepare_data(
     This is a convenience function that combines loading, projection,
     and filtering into a single step.
     
+    By default, only a subset of branches is read from the ROOT file
+    (focal plane, target reconstruction, and reaction vertex variables),
+    as defined by ``DataLoadingConfig.branches``. To read all branches,
+    pass ``data_config=DataLoadingConfig(branches=None)``.
+    
     Parameters
     ----------
     file_path : str
@@ -334,6 +339,7 @@ def load_and_prepare_data(
         If True, filters data to target plane range. Default is True.
     data_config : DataLoadingConfig, optional
         Configuration for data loading. If None, uses defaults.
+        The ``branches`` field controls which branches are read.
     projection_config : TargetProjectionConfig, optional
         Configuration for target projection. If None, uses defaults.
     verbose : bool, optional
@@ -348,12 +354,18 @@ def load_and_prepare_data(
     --------
     >>> df = load_and_prepare_data("data.root")
     >>> print(df[['target_x', 'target_y', 'P_gtr_y']].head())
+    
+    >>> # Read all branches
+    >>> from shms_optics_calibration import DataLoadingConfig
+    >>> df = load_and_prepare_data("data.root", data_config=DataLoadingConfig(branches=None))
     """
     if data_config is None:
         data_config = DEFAULT_DATA_LOADING_CONFIG
     
     # Load data
-    df = load_root_file(file_path, tree_name=tree_name, verbose=verbose)
+    df = load_root_file(
+        file_path, tree_name=tree_name, branches=data_config.branches, verbose=verbose
+    )
     
     # Add target projection
     if add_projection:
