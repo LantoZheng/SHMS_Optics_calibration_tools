@@ -23,6 +23,18 @@ FEATURE_COLS = ['P_dc_x_fp', 'P_dc_y_fp', 'P_dc_xp_fp', 'P_dc_yp_fp']
 #: Target variables (physics quantities at reaction vertex)
 TARGET_COLS = ['P_gtr_dp', 'P_gtr_th', 'P_gtr_ph', 'P_react_z']
 
+#: Default branches to read from ROOT files.
+#: Includes focal plane variables, target reconstruction variables,
+#: and reaction vertex variables.
+DEFAULT_BRANCHES: List[str] = [
+    # Focal plane (fit inputs — MUST have all 4)
+    'P_dc_x_fp', 'P_dc_y_fp', 'P_dc_xp_fp', 'P_dc_yp_fp',
+    # Target reconstruction (to compare against truth)
+    'P_gtr_dp', 'P_gtr_ph', 'P_gtr_th', 'P_gtr_y', 'P_gtr_x',
+    # Reaction vertex (extended-target / beam-offset correction)
+    'P_react_x', 'P_react_y', 'P_react_z',
+]
+
 
 @dataclass
 class DataLoadingConfig:
@@ -33,11 +45,15 @@ class DataLoadingConfig:
         target_cols: List of target variable column names.
         target_x_range: Tuple (min, max) for filtering target_x values.
         target_y_range: Tuple (min, max) for filtering target_y values.
+        branches: List of branch names to read from ROOT files.
+            Defaults to DEFAULT_BRANCHES (focal plane, target reconstruction,
+            and reaction vertex columns). Set to None to read all branches.
     """
     feature_cols: List[str] = field(default_factory=lambda: FEATURE_COLS.copy())
     target_cols: List[str] = field(default_factory=lambda: TARGET_COLS.copy())
     target_x_range: Tuple[float, float] = (-20.0, 20.0)
     target_y_range: Tuple[float, float] = (-20.0, 20.0)
+    branches: Optional[List[str]] = field(default_factory=lambda: DEFAULT_BRANCHES.copy())
 
 
 @dataclass
