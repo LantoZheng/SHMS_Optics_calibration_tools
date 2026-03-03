@@ -85,6 +85,7 @@ from .data_io import (
     project_to_target,
     add_target_projection,
     filter_target_range,
+    filter_branch_ranges,
     load_and_prepare_data,
     load_simulation_data,
 )
@@ -198,6 +199,7 @@ __all__ = [
     'project_to_target',
     'add_target_projection',
     'filter_target_range',
+    'filter_branch_ranges',
     'load_and_prepare_data',
     'load_simulation_data',
     
