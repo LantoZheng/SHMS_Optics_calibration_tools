@@ -5,7 +5,7 @@ This module provides functions for loading ROOT files and reading
 SHMS optics calibration data.
 """
 
-from typing import Optional, List, Tuple, Union
+from typing import Optional, List, Tuple, Union, Dict
 import pandas as pd
 import numpy as np
 
@@ -310,6 +310,57 @@ def filter_target_range(
     return df_filtered
 
 
+def filter_branch_ranges(
+    df: pd.DataFrame,
+    branch_ranges: Dict[str, Tuple[float, float]],
+    verbose: bool = True
+) -> pd.DataFrame:
+    """
+    Filter DataFrame to keep only events within accepted ranges for specified branches.
+
+    This implements deadzone filtering: events whose value in any specified
+    branch falls outside the corresponding (min, max) accepted range are
+    dropped from the DataFrame.
+
+    Parameters
+    ----------
+    df : pd.DataFrame
+        Input DataFrame.
+    branch_ranges : dict
+        Dictionary mapping column names to (min, max) accepted ranges.
+        Example: ``{'P_gtr_dp': (-0.1, 0.1), 'P_gtr_y': (-5.0, 5.0)}``.
+    verbose : bool, optional
+        If True, prints filtering statistics. Default is True.
+
+    Returns
+    -------
+    pd.DataFrame
+        Filtered DataFrame with out-of-range events removed.
+
+    Examples
+    --------
+    >>> df = load_root_file("data.root")
+    >>> df = filter_branch_ranges(df, {'P_gtr_dp': (-0.1, 0.1)})
+    """
+    original_count = len(df)
+    mask = pd.Series(True, index=df.index)
+
+    for col, (lo, hi) in branch_ranges.items():
+        if col not in df.columns:
+            if verbose:
+                print(f"Warning: column '{col}' not found in DataFrame, skipping.")
+            continue
+        mask &= (df[col] >= lo) & (df[col] <= hi)
+
+    df_filtered = df[mask].copy()
+
+    if verbose:
+        print(f"Branch range filtering: {original_count:,} -> {len(df_filtered):,} events")
+        print(f"Removed {original_count - len(df_filtered):,} events outside accepted ranges")
+
+    return df_filtered
+
+
 def load_and_prepare_data(
     file_path: str,
     tree_name: str = "T",
@@ -343,6 +394,9 @@ def load_and_prepare_data(
     data_config : DataLoadingConfig, optional
         Configuration for data loading. If None, uses defaults.
         The ``branches`` field controls which branches are read.
+        The ``branch_ranges`` field, when set, applies deadzone filtering
+        to keep only events within the accepted range for each specified
+        branch.
     projection_config : TargetProjectionConfig, optional
         Configuration for target projection. If None, uses defaults.
     verbose : bool, optional
@@ -361,6 +415,10 @@ def load_and_prepare_data(
     >>> # Read all branches
     >>> from shms_optics_calibration import DataLoadingConfig
     >>> df = load_and_prepare_data("data.root", data_config=DataLoadingConfig(branches=None))
+    
+    >>> # Apply deadzone filtering on specific branches
+    >>> cfg = DataLoadingConfig(branch_ranges={'P_gtr_dp': (-0.1, 0.1)})
+    >>> df = load_and_prepare_data("data.root", data_config=cfg)
     """
     if data_config is None:
         data_config = DEFAULT_DATA_LOADING_CONFIG
@@ -369,6 +427,10 @@ def load_and_prepare_data(
     df = load_root_file(
         file_path, tree_name=tree_name, branches=data_config.branches, verbose=verbose
     )
+    
+    # Apply deadzone (branch range) filtering
+    if data_config.branch_ranges:
+        df = filter_branch_ranges(df, data_config.branch_ranges, verbose=verbose)
     
     # Add target projection
     if add_projection:

@@ -29,6 +29,7 @@ def classify_foils_with_range(
     y_range: Optional[Tuple[float, float]] = (-5.0, 5.0),
     peak_height_fraction: float = 0.05,
     peak_distance: int = 10,
+    drop_unclassified: bool = True,
     plot: bool = False,
     config: Optional[FoilClassificationConfig] = None
 ) -> pd.DataFrame:
@@ -67,6 +68,10 @@ def classify_foils_with_range(
         Default is 0.05.
     peak_distance : int, optional
         Minimum distance between peaks in bins. Default is 10.
+    drop_unclassified : bool, optional
+        If True (default), events that are not assigned to any foil
+        (foil_position == -1) are removed from the returned DataFrame.
+        Set to False to retain them with foil_position == -1.
     plot : bool, optional
         If True, creates a visualization plot. Default is False.
     config : FoilClassificationConfig, optional
@@ -77,6 +82,8 @@ def classify_foils_with_range(
     pd.DataFrame
         DataFrame with added 'foil_position' column.
         Values are integers starting from 0, or -1 for unclassified events.
+        When ``drop_unclassified=True`` (default), rows with
+        foil_position == -1 are removed before returning.
     
     Examples
     --------
@@ -102,6 +109,7 @@ def classify_foils_with_range(
         y_range = config.y_range
         peak_height_fraction = config.peak_height_fraction
         peak_distance = config.peak_distance
+        drop_unclassified = config.drop_unclassified
     
     # Make a copy to avoid modifying original
     df = df.copy()
@@ -124,6 +132,8 @@ def classify_foils_with_range(
     if len(data_hist) == 0:
         print("Warning: No data in range!")
         df['foil_position'] = -1
+        if drop_unclassified:
+            return df.iloc[0:0].copy()
         return df
     
     # Generate histogram
@@ -140,6 +150,8 @@ def classify_foils_with_range(
     if len(peaks) == 0:
         print("No significant peaks found.")
         df['foil_position'] = -1
+        if drop_unclassified:
+            return df.iloc[0:0].copy()
         return df
     
     # Calculate FWHM for each peak
@@ -215,6 +227,13 @@ def classify_foils_with_range(
         plt.legend()
         plt.xlim(y_min, y_max)
         plt.show()
+    
+    # Drop unclassified events if requested
+    if drop_unclassified:
+        n_before = len(df)
+        df = df[df['foil_position'] != -1].copy()
+        print(f"Dropped {n_before - len(df):,} unclassified events "
+              f"({len(df):,} remaining)")
     
     return df
 

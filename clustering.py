@@ -53,6 +53,7 @@ def auto_dbscan_clustering(
     max_iterations: int = 10,
     distance_threshold: float = 1.0,
     max_cluster_size: float = 2.2,
+    drop_noise: bool = True,
     config: Optional[DBSCANConfig] = None,
     verbose: bool = True
 ) -> Tuple[pd.DataFrame, float, int]:
@@ -87,6 +88,10 @@ def auto_dbscan_clustering(
         Minimum distance between cluster centers. Default is 1.0.
     max_cluster_size : float, optional
         Maximum allowed cluster size in cm. Default is 2.2.
+    drop_noise : bool, optional
+        If True (default), noise points (cluster == -1) are removed from
+        the returned DataFrame. Set to False to retain them with
+        ``is_noise=True``.
     config : DBSCANConfig, optional
         Configuration object. If provided, overrides individual parameters.
     verbose : bool, optional
@@ -131,6 +136,7 @@ def auto_dbscan_clustering(
         max_iterations = config.max_iterations
         distance_threshold = config.distance_threshold
         max_cluster_size = config.max_cluster_size
+        drop_noise = config.drop_noise
     
     # Extract data
     df = df.copy()
@@ -305,6 +311,13 @@ def auto_dbscan_clustering(
     if verbose:
         print(f"\nClustering complete! Found {best_n} clusters")
         print(f"Noise points: {df['is_noise'].sum()}")
+    
+    if drop_noise:
+        n_before = len(df)
+        df = df[~df['is_noise']].copy()
+        if verbose:
+            print(f"Dropped {n_before - len(df):,} noise points "
+                  f"({len(df):,} remaining)")
     
     return df, best_eps, best_n
 
@@ -589,6 +602,7 @@ def two_entry_dbscan(
     y_col: str = 'target_y',
     core_config: Optional[DBSCANConfig] = None,
     edge_config: Optional[EdgeClusteringConfig] = None,
+    drop_noise: bool = True,
     verbose: bool = True
 ) -> Tuple[pd.DataFrame, Dict[str, Any], int]:
     """
@@ -610,6 +624,12 @@ def two_entry_dbscan(
         Configuration for core clustering.
     edge_config : EdgeClusteringConfig, optional
         Configuration for edge clustering.
+    drop_noise : bool, optional
+        If True (default), noise points remaining after both clustering
+        stages are removed from the returned DataFrame. Set to False to
+        retain them with ``is_noise=True``. Note: noise dropping from
+        ``core_config`` is ignored here; noise is only dropped once after
+        both stages complete.
     verbose : bool, optional
         If True, prints progress information. Default is True.
     
@@ -641,13 +661,13 @@ def two_entry_dbscan(
         print("Two-Entry DBSCAN Clustering")
         print("=" * 60)
     
-    # Stage 1: Core clustering
+    # Stage 1: Core clustering (never drop noise here — peel_and_cluster_edges needs them)
     if verbose:
         print("\n[Stage 1] Core region clustering...")
     
     df, eps_core, n_core = auto_dbscan_clustering(
         df, x_col=x_col, y_col=y_col,
-        config=core_config, verbose=verbose
+        config=core_config, drop_noise=False, verbose=verbose
     )
     
     # Stage 2: Edge clustering
@@ -672,6 +692,13 @@ def two_entry_dbscan(
         print(f"  Edge clusters: {n_total - n_core}")
         print(f"  Total clusters: {n_total}")
     
+    if drop_noise:
+        n_before = len(df)
+        df = df[~df['is_noise']].copy()
+        if verbose:
+            print(f"Dropped {n_before - len(df):,} noise points "
+                  f"({len(df):,} remaining)")
+    
     return df, params, n_total
 
 
@@ -685,6 +712,7 @@ def auto_hdbscan_clustering(
     max_iterations: int = 10,
     distance_threshold: float = 1.0,
     max_cluster_size: float = 2.2,
+    drop_noise: bool = True,
     config: Optional[HDBSCANConfig] = None,
     verbose: bool = True
 ) -> Tuple[pd.DataFrame, Dict[str, Any], int]:
@@ -719,6 +747,10 @@ def auto_hdbscan_clustering(
         Minimum distance between cluster centers. Default is 1.0.
     max_cluster_size : float, optional
         Maximum allowed cluster size in cm. Default is 2.2.
+    drop_noise : bool, optional
+        If True (default), noise points (cluster == -1) are removed from
+        the returned DataFrame. Set to False to retain them with
+        ``is_noise=True``.
     config : HDBSCANConfig, optional
         Configuration object. If provided, overrides individual parameters.
     verbose : bool, optional
@@ -766,6 +798,7 @@ def auto_hdbscan_clustering(
         cluster_selection_method = config.cluster_selection_method
         metric = config.metric
         alpha = config.alpha
+        drop_noise = config.drop_noise
     else:
         cluster_selection_method = 'leaf'
         metric = 'euclidean'
@@ -901,6 +934,13 @@ def auto_hdbscan_clustering(
     if verbose:
         print(f"\nClustering complete! Found {best_n_clusters} clusters")
         print(f"Noise points: {df['is_noise'].sum()}")
+    
+    if drop_noise:
+        n_before = len(df)
+        df = df[~df['is_noise']].copy()
+        if verbose:
+            print(f"Dropped {n_before - len(df):,} noise points "
+                  f"({len(df):,} remaining)")
     
     return df, best_params, best_n_clusters
 

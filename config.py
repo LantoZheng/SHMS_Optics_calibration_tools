@@ -53,12 +53,17 @@ class DataLoadingConfig:
         branches: List of branch names to read from ROOT files.
             Defaults to DEFAULT_BRANCHES (focal plane, target reconstruction,
             and reaction vertex columns). Set to None to read all branches.
+        branch_ranges: Optional dictionary mapping branch (column) names to
+            (min, max) accepted ranges. Events outside the accepted range for
+            any specified branch are dropped (deadzone filtering).
+            Example: ``{'P_gtr_dp': (-0.1, 0.1), 'P_gtr_y': (-5.0, 5.0)}``.
     """
     feature_cols: List[str] = field(default_factory=lambda: FEATURE_COLS.copy())
     target_cols: List[str] = field(default_factory=lambda: TARGET_COLS.copy())
     target_x_range: Tuple[float, float] = (-20.0, 20.0)
     target_y_range: Tuple[float, float] = (-20.0, 20.0)
     branches: Optional[List[str]] = field(default_factory=lambda: DEFAULT_BRANCHES.copy())
+    branch_ranges: Optional[Dict[str, Tuple[float, float]]] = None
 
 
 @dataclass
@@ -109,6 +114,7 @@ class FoilClassificationConfig:
     y_range: Tuple[float, float] = (-5.0, 5.0)
     peak_height_fraction: float = 0.05
     peak_distance: int = 10
+    drop_unclassified: bool = True
 
 
 @dataclass
@@ -133,6 +139,7 @@ class DBSCANConfig:
     max_iterations: int = 10
     distance_threshold: float = 1.0
     max_cluster_size: float = 2.2
+    drop_noise: bool = True
 
 
 @dataclass
@@ -186,6 +193,7 @@ class HDBSCANConfig:
     cluster_selection_method: str = 'leaf'
     metric: str = 'euclidean'
     alpha: float = 1.0
+    drop_noise: bool = True
 
 
 @dataclass
