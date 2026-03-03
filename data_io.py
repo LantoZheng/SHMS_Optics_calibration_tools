@@ -83,6 +83,9 @@ def load_root_file(
             df = tree.arrays(expressions=branches, library="pd")
         else:
             df = tree.arrays(library="pd")
+        
+        # Preserve original ROOT entry numbers as 'id' column
+        df.insert(0, 'id', df.index)
     
     if verbose:
         print(f"Data loaded successfully! DataFrame shape: {df.shape}")

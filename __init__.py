@@ -180,6 +180,7 @@ from .config import (
     FEATURE_COLS,
     TARGET_COLS,
     DEFAULT_BRANCHES,
+    DEFAULT_PRESERVED_COLS,
 )
 
 # ============================================================
@@ -269,4 +270,5 @@ __all__ = [
     'FEATURE_COLS',
     'TARGET_COLS',
     'DEFAULT_BRANCHES',
+    'DEFAULT_PRESERVED_COLS',
 ]
