@@ -35,6 +35,11 @@ DEFAULT_BRANCHES: List[str] = [
     'P_react_x', 'P_react_y', 'P_react_z',
 ]
 
+#: Columns that are always preserved during column filtering.
+#: These columns are generated during data loading (not read from ROOT)
+#: and should be retained in any column selection operation.
+DEFAULT_PRESERVED_COLS: List[str] = ['id']
+
 
 @dataclass
 class DataLoadingConfig:
