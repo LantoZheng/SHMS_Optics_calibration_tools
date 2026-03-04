@@ -7,6 +7,7 @@ clustering approaches.
 """
 
 from typing import Optional, Tuple, Dict, List, Any
+import warnings
 import numpy as np
 import pandas as pd
 
@@ -41,6 +42,12 @@ from .config import (
     DEFAULT_SOFT_WEIGHTED_DBSCAN_CONFIG,
 )
 from .preprocessing import initialize_clustering_columns
+
+# Warning thresholds for unusual clustering results
+_NOISE_RATIO_THRESHOLD = 0.3
+_MIN_CLUSTER_EVENTS = 10
+_MIN_CLUSTER_SIZE_RATIO = 0.1
+_MAX_CLUSTER_SIZE_RATIO = 5.0
 
 
 def auto_dbscan_clustering(
@@ -311,6 +318,50 @@ def auto_dbscan_clustering(
     if verbose:
         print(f"\nClustering complete! Found {best_n} clusters")
         print(f"Noise points: {df['is_noise'].sum()}")
+    
+    # Warn about unusual cluster count
+    if best_n < target_low or best_n > target_high:
+        warnings.warn(
+            f"Unusual cluster count: found {best_n} clusters, "
+            f"outside target range [{target_low}, {target_high}]. "
+            "Clustering results may be unreliable.",
+            UserWarning, stacklevel=2
+        )
+    
+    # Warn about high noise ratio
+    n_total = len(final_labels)
+    n_noise = (final_labels == -1).sum()
+    if n_total > 0:
+        noise_ratio = n_noise / n_total
+        if noise_ratio > _NOISE_RATIO_THRESHOLD:
+            warnings.warn(
+                f"Unusual dropout data: {noise_ratio:.1%} of events "
+                f"({n_noise:,}) are classified as noise. "
+                "Consider adjusting DBSCAN parameters (eps, min_samples).",
+                UserWarning, stacklevel=2
+            )
+    
+    # Warn about unusual cluster sizes (event counts)
+    if best_n > 0:
+        cluster_sizes = [
+            (final_labels == k).sum()
+            for k in sorted(set(final_labels)) if k != -1
+        ]
+        mean_size = np.mean(cluster_sizes)
+        min_size = min(cluster_sizes)
+        max_size = max(cluster_sizes)
+        if min_size < max(_MIN_CLUSTER_EVENTS, mean_size * _MIN_CLUSTER_SIZE_RATIO):
+            warnings.warn(
+                f"Unusual cluster size: smallest cluster has {min_size} events "
+                f"(mean: {mean_size:.0f}). Some clusters may be spurious.",
+                UserWarning, stacklevel=2
+            )
+        if max_size > mean_size * _MAX_CLUSTER_SIZE_RATIO:
+            warnings.warn(
+                f"Unusual cluster size: largest cluster has {max_size} events "
+                f"(mean: {mean_size:.0f}). Some clusters may be over-merged.",
+                UserWarning, stacklevel=2
+            )
     
     if drop_noise:
         n_before = len(df)
@@ -934,6 +985,50 @@ def auto_hdbscan_clustering(
     if verbose:
         print(f"\nClustering complete! Found {best_n_clusters} clusters")
         print(f"Noise points: {df['is_noise'].sum()}")
+    
+    # Warn about unusual cluster count
+    if best_n_clusters < target_low or best_n_clusters > target_high:
+        warnings.warn(
+            f"Unusual cluster count: found {best_n_clusters} clusters, "
+            f"outside target range [{target_low}, {target_high}]. "
+            "Clustering results may be unreliable.",
+            UserWarning, stacklevel=2
+        )
+    
+    # Warn about high noise ratio
+    n_total = len(best_labels)
+    n_noise = (best_labels == -1).sum()
+    if n_total > 0:
+        noise_ratio = n_noise / n_total
+        if noise_ratio > _NOISE_RATIO_THRESHOLD:
+            warnings.warn(
+                f"Unusual dropout data: {noise_ratio:.1%} of events "
+                f"({n_noise:,}) are classified as noise. "
+                "Consider adjusting HDBSCAN parameters (min_cluster_size, min_samples).",
+                UserWarning, stacklevel=2
+            )
+    
+    # Warn about unusual cluster sizes (event counts)
+    if best_n_clusters > 0:
+        cluster_sizes = [
+            (best_labels == k).sum()
+            for k in sorted(set(best_labels)) if k != -1
+        ]
+        mean_size = np.mean(cluster_sizes)
+        min_size = min(cluster_sizes)
+        max_size = max(cluster_sizes)
+        if min_size < max(_MIN_CLUSTER_EVENTS, mean_size * _MIN_CLUSTER_SIZE_RATIO):
+            warnings.warn(
+                f"Unusual cluster size: smallest cluster has {min_size} events "
+                f"(mean: {mean_size:.0f}). Some clusters may be spurious.",
+                UserWarning, stacklevel=2
+            )
+        if max_size > mean_size * _MAX_CLUSTER_SIZE_RATIO:
+            warnings.warn(
+                f"Unusual cluster size: largest cluster has {max_size} events "
+                f"(mean: {mean_size:.0f}). Some clusters may be over-merged.",
+                UserWarning, stacklevel=2
+            )
     
     if drop_noise:
         n_before = len(df)
