@@ -1,3 +1,8 @@
+# ============================================
+# SHMS Optics Calibration Tools .gitignore
+# ============================================
+
+# -------------------- Python --------------------
 __pycache__/
 *.py[cod]
 *.pyo
@@ -8,7 +13,68 @@ dist/
 build/
 .eggs/
 *.egg
+
+# Virtual Environments
 .env
 .venv
 env/
 venv/
+ENV/
+
+# Unit test / coverage reports
+.pytest_cache/
+htmlcov/
+.coverage
+.coverage.*
+*.cover
+
+# Jupyter Notebook
+.ipynb_checkpoints/
+*/.ipynb_checkpoints/
+
+# -------------------- macOS --------------------
+.DS_Store
+.AppleDouble
+.LSOverride
+._*
+Icon?
+.Spotlight-V100
+.Trashes
+
+# -------------------- Windows --------------------
+Thumbs.db
+Thumbs.db:encryptable
+ehthumbs.db
+ehthumbs_vista.db
+Desktop.ini
+$RECYCLE.BIN/
+*.lnk
+
+# -------------------- Linux --------------------
+*~
+.fuse_hidden*
+.nfs*
+
+# -------------------- IDE / Editor --------------------
+# VSCode
+.vscode/
+
+# PyCharm / IntelliJ
+.idea/
+
+# Vim
+*.swp
+*.swo
+*~
+
+# Emacs
+\#*\#
+.#*
+
+# -------------------- Temporary files --------------------
+*.tmp
+*.temp
+*.bak
+*.backup
+*.log
+*.cache
