@@ -5,6 +5,7 @@ This module provides functions for preprocessing SHMS optics data,
 including foil position classification based on P_gtr_y distribution.
 """
 
+import warnings
 from typing import Optional, Tuple, List
 import numpy as np
 import pandas as pd
@@ -123,8 +124,18 @@ def classify_foils_with_range(
         ].dropna()
         print(f"Applied range limit: [{y_min}, {y_max}]")
         print(f"  - Original data count: {len(df)}")
+        n_out_of_range = len(df) - len(data_hist)
         print(f"  - In-range data count: {len(data_hist)} "
-              f"(removed {len(df) - len(data_hist)} outliers)")
+              f"(removed {n_out_of_range} outliers)")
+        if len(df) > 0:
+            dropout_ratio = n_out_of_range / len(df)
+            if dropout_ratio > 0.2:
+                warnings.warn(
+                    f"Unusual dropout data: {dropout_ratio:.1%} of events "
+                    f"({n_out_of_range:,}) are outside the range [{y_min}, {y_max}]. "
+                    "Consider adjusting y_range.",
+                    UserWarning, stacklevel=2
+                )
     else:
         data_hist = df[col_name].dropna()
         y_min, y_max = data_hist.min(), data_hist.max()
@@ -194,6 +205,15 @@ def classify_foils_with_range(
     
     unclassified = (df['foil_position'] == -1).sum()
     print(f"  Unclassified: {unclassified:,} events")
+    if len(df) > 0:
+        unclassified_ratio = unclassified / len(df)
+        if unclassified_ratio > 0.3:
+            warnings.warn(
+                f"Unusual dropout data: {unclassified_ratio:.1%} of events "
+                f"({unclassified:,}) could not be assigned to any foil. "
+                "Check foil classification parameters (sigma_factor, y_range).",
+                UserWarning, stacklevel=2
+            )
     
     # Visualization
     if plot:

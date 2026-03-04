@@ -6,6 +6,7 @@ centers and performing calibration alignment.
 """
 
 from typing import Optional, Tuple, Dict, List, Any
+import warnings
 import numpy as np
 import pandas as pd
 
@@ -29,6 +30,12 @@ from .config import (
     GridIndexConfig,
     DEFAULT_GRID_INDEX_CONFIG,
 )
+
+# Warning thresholds for unusual sieve pattern shapes
+_MAX_MISSING_RATIO = 0.15
+_MAX_ROW_COUNT_CV = 0.3
+_MAX_SPACING_CV = 0.3
+_SPACING_CHECK_NEIGHBORS = 3
 
 
 def build_grid_index_from_centers(
@@ -231,6 +238,49 @@ def build_grid_index_from_centers(
         print(f"Expected positions: {len(expected_positions)}")
         print(f"Detected positions: {len(detected_positions)}")
         print(f"Missing positions: {len(missing_positions)}")
+    
+    # Warn about high fraction of missing sieve holes
+    if len(expected_positions) > 0:
+        missing_ratio = len(missing_positions) / len(expected_positions)
+        if missing_ratio > _MAX_MISSING_RATIO:
+            warnings.warn(
+                f"Unusual sieve pattern: {missing_ratio:.1%} of expected grid "
+                f"positions ({len(missing_positions)}/{len(expected_positions)}) "
+                "are missing. The pattern may be nonrectangular or poorly arranged.",
+                UserWarning, stacklevel=2
+            )
+    
+    # Warn about irregular row/column counts (non-rectangular pattern)
+    row_col_counts = centers.groupby('row')['col'].count()
+    if len(row_col_counts) > 1 and row_col_counts.mean() > 0:
+        cv = row_col_counts.std() / row_col_counts.mean()
+        if cv > _MAX_ROW_COUNT_CV:
+            warnings.warn(
+                f"Unusual sieve pattern: rows have inconsistent hole counts "
+                f"(coefficient of variation: {cv:.2f}). "
+                "The sieve pattern may be poorly arranged or nonrectangular.",
+                UserWarning, stacklevel=2
+            )
+    
+    # Warn about inconsistent grid spacing
+    if len(coords_aligned) >= 4:
+        nn_check = NearestNeighbors(
+            n_neighbors=min(_SPACING_CHECK_NEIGHBORS, len(coords_aligned))
+        )
+        nn_check.fit(coords_aligned)
+        dists_check, _ = nn_check.kneighbors(coords_aligned)
+        nn_dists_all = dists_check[:, 1:].flatten()
+        nn_dists_all = nn_dists_all[nn_dists_all > 0]
+        spacing_mean = np.mean(nn_dists_all) if len(nn_dists_all) > 0 else 0
+        if spacing_mean > 0:
+            spacing_cv = np.std(nn_dists_all) / spacing_mean
+            if spacing_cv > _MAX_SPACING_CV:
+                warnings.warn(
+                    f"Unusual sieve pattern: grid spacing is highly inconsistent "
+                    f"(coefficient of variation: {spacing_cv:.2f}). "
+                    "The sieve pattern may be poorly arranged.",
+                    UserWarning, stacklevel=2
+                )
     
     grid_params = {
         'grid_spacing': grid_spacing,
