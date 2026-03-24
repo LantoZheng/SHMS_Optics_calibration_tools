@@ -291,3 +291,4 @@ This project is licensed under the MIT License.
 - Jefferson Lab Hall C: https://www.jlab.org/physics/hall-c
 - DBSCAN: Ester et al. (1996)
 - HDBSCAN: Campello et al. (2013)
+- Slides for this :https://docs.google.com/presentation/d/1iP7oNQDBm0SIf55r50uZIg5BEsk-dZVPX9HUFhJIWe8/edit?usp=sharing
