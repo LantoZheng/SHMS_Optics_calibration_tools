@@ -82,9 +82,9 @@ __license__ = 'MIT'
 from .data_io import (
     load_root_file,
     get_root_file_info,
-    project_to_target,
-    add_target_projection,
-    filter_target_range,
+    project_to_sieve,
+    add_sieve_projection,
+    filter_sieve_range,
     filter_branch_ranges,
     load_and_prepare_data,
     load_simulation_data,
@@ -120,7 +120,7 @@ from .visualization import (
     visualize_clustering_summary,
     visualize_clusters_in_focal_plane,
     visualize_foil_classification,
-    visualize_target_plane,
+    visualize_sieve_plane,
     visualize_benchmark_comparison,
     plot_efficiency_map,
 )
@@ -196,9 +196,9 @@ __all__ = [
     # Data I/O
     'load_root_file',
     'get_root_file_info',
-    'project_to_target',
-    'add_target_projection',
-    'filter_target_range',
+    'project_to_sieve',
+    'add_sieve_projection',
+    'filter_sieve_range',
     'filter_branch_ranges',
     'load_and_prepare_data',
     'load_simulation_data',
@@ -222,7 +222,7 @@ __all__ = [
     'visualize_clustering_summary',
     'visualize_clusters_in_focal_plane',
     'visualize_foil_classification',
-    'visualize_target_plane',
+    'visualize_sieve_plane',
     'visualize_benchmark_comparison',
     'plot_efficiency_map',
     

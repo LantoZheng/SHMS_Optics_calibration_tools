@@ -62,7 +62,7 @@ The core task of this software package corresponds to **step 3**: automatically 
 shms_optics_calibration/
 ├── __init__.py        # Public API exports
 ├── config.py          # All configuration parameters and defaults
-├── data_io.py         # ROOT file loading and target-plane projection
+├── data_io.py         # ROOT file loading and sieve-plane projection
 ├── preprocessing.py   # Foil-position classification and data preparation
 ├── clustering.py      # Clustering algorithms (DBSCAN / HDBSCAN / Two-Entry)
 ├── calibration.py     # Grid-index construction and hole-position estimation
@@ -79,7 +79,7 @@ shms_optics_calibration/
 ROOT file
     │
     ▼ data_io.load_and_prepare_data()
-    │  (load data → target-plane projection → range filter)
+    │  (load data → sieve-plane projection → range filter)
     │
     ▼ preprocessing.classify_foils_with_range()
     │  (identify multiple foil positions from P_gtr_y distribution)
@@ -125,16 +125,16 @@ Loads data from a ROOT file into a pandas DataFrame.
 
 ---
 
-### 3.2 `project_to_target()` and `add_target_projection()`
+### 3.2 `project_to_sieve()` and `add_sieve_projection()`
 
-Projects the reconstructed target-plane variables onto sieve-plate-plane coordinates.
+Projects reconstructed variables onto sieve-plane coordinates.
 
 **Projection formulas (from the SHMS optics model):**
 
 ```
-target_x = P_gtr_x + P_gtr_th × z_coefficient
+sieve_x = P_gtr_x + P_gtr_th × z_coefficient
 
-target_y = (-0.019 × dp + 0.00019 × dp² + 213.0 × ph + y)
+sieve_y = (-0.019 × dp + 0.00019 × dp² + 213.0 × ph + y)
          + 40.0 × (-0.00052 × dp + 0.0000052 × dp² + ph)
 ```
 
@@ -144,8 +144,8 @@ where `z_coefficient = 253.0` is the sieve-to-target distance (in cm).
 
 | Parameter | Default | Physical meaning |
 |---|---|---|
-| `x_z_coefficient` | 253.0 | Sieve-to-target Z distance (cm). Changing this value is equivalent to shifting the assumed Z position of the sieve, directly affecting the accuracy of `target_x` |
-| `y_dp_linear` | −0.019 | First-order coefficient of $\delta$ (momentum deviation) contribution to `target_y` (dispersion correction) |
+| `x_z_coefficient` | 253.0 | Sieve-to-target Z distance (cm). Changing this value is equivalent to shifting the assumed Z position of the sieve, directly affecting the accuracy of `sieve_x` |
+| `y_dp_linear` | −0.019 | First-order coefficient of $\delta$ (momentum deviation) contribution to `sieve_y` (dispersion correction) |
 | `y_dp_quadratic` | 0.00019 | Second-order coefficient of $\delta$ (non-linear dispersion correction) |
 | `y_ph_coefficient` | 213.0 | Coefficient of $\phi$ (horizontal angle) contribution (= 138.0 + 75.0, from SHMS optical geometry) |
 | `y_offset_dp_linear` | −0.00052 | First-order coefficient of $\delta$ in the offset term |
@@ -153,8 +153,8 @@ where `z_coefficient = 253.0` is the sieve-to-target distance (in cm).
 | `y_offset_multiplier` | 40.0 | Overall amplification factor of the offset term (from the sieve-offset geometry) |
 
 > **Parameter impact analysis**:
-> - A 1 cm error in `x_z_coefficient` will shift `target_x` by ~2.5 mm for angles of order $x'_{tar} \sim 10^{-2}$ rad—a significant effect on sieve-hole identification.
-> - The value 213.0 = 138.0 + 75.0 for `y_ph_coefficient` comes from the path length after the main bending magnet plus a correction term. An error in this coefficient shifts the entire `target_y` pattern horizontally.
+> - A 1 cm error in `x_z_coefficient` will shift `sieve_x` by ~2.5 mm for angles of order $x'_{tar} \sim 10^{-2}$ rad—a significant effect on sieve-hole identification.
+> - The value 213.0 = 138.0 + 75.0 for `y_ph_coefficient` comes from the path length after the main bending magnet plus a correction term. An error in this coefficient shifts the entire `sieve_y` pattern horizontally.
 > - All coefficients were carefully fitted to real SHMS data. They should not be modified unless there is a clear physical justification (e.g., a different magnetic-field configuration).
 
 **`DataLoadingConfig` parameters:**
@@ -163,8 +163,8 @@ where `z_coefficient = 253.0` is the sieve-to-target distance (in cm).
 |---|---|---|
 | `feature_cols` | `['P_dc_x_fp', 'P_dc_y_fp', 'P_dc_xp_fp', 'P_dc_yp_fp']` | Focal-plane variable column names (used for 4D separability analysis) |
 | `target_cols` | `['P_gtr_dp', 'P_gtr_th', 'P_gtr_ph', 'P_react_z']` | Target-plane variable column names |
-| `target_x_range` | (−20.0, 20.0) | Valid range for `target_x` (cm); events outside this range are filtered out |
-| `target_y_range` | (−20.0, 20.0) | Valid range for `target_y` (cm) |
+| `sieve_x_range` | (−20.0, 20.0) | Valid range for `sieve_x` (cm); events outside this range are filtered out |
+| `sieve_y_range` | (−20.0, 20.0) | Valid range for `sieve_y` (cm) |
 
 ---
 
@@ -255,8 +255,8 @@ DBSCAN (Density-Based Spatial Clustering of Applications with Noise) defines clu
 
 | Parameter | Default | Description and impact |
 |---|---|---|
-| `x_col` | `'target_x'` | Column name for the X coordinate |
-| `y_col` | `'target_y'` | Column name for the Y coordinate |
+| `x_col` | `'sieve_x'` | Column name for the X coordinate |
+| `y_col` | `'sieve_y'` | Column name for the Y coordinate |
 | `eps_range` | (0.01, 0.2) | Search range for eps (cm). eps defines the neighborhood radius: **too small** → each point forms its own cluster (over-segmentation); **too large** → neighboring holes merge (under-segmentation). Sieve-hole diameters are ~0.4–0.8 cm; typical optimal eps is ~0.05–0.15 cm. |
 | `target_clusters` | (50, 70) | Target cluster count range. The SHMS sieve plate hole count is determined by its geometry (typically ~63 holes in a 7×9 pattern), but edge holes may not be visible. Set this based on the actual sieve plate specifications. |
 | `min_samples` | None | Minimum number of neighbors required for a core point. When `None`, automatically computed as `data_size / 1000`. **Increasing** this makes the algorithm more robust to noise, but may classify low-statistics holes as noise; **decreasing** it finds more holes but is more noise-sensitive. |
@@ -487,7 +487,7 @@ Plots a clustering scatter plot with signal points colored by cluster ID, noise 
 | Parameter | Default | Description |
 |---|---|---|
 | `figsize` | (10, 10) | Figure size (inches) |
-| `xlim` | (−20.0, 20.0) | X-axis range (cm); should match `target_x_range` |
+| `xlim` | (−20.0, 20.0) | X-axis range (cm); should match `sieve_x_range` |
 | `ylim` | (−20.0, 20.0) | Y-axis range (cm) |
 | `point_size` | 0.2 | Signal point size (use a small value at high event density to avoid overplotting) |
 | `noise_point_size` | 0.1 | Noise point size |
@@ -503,7 +503,7 @@ Plots a clustering scatter plot with signal points colored by cluster ID, noise 
 | `visualize_clustering_summary()` | 2×2 panel: clustering results + cluster-center distribution + cluster-size histogram + statistics text |
 | `visualize_clusters_in_focal_plane()` | Show clustering results projected onto focal-plane variables (4 subplots: $x_{fp}$-$y_{fp}$, $x_{fp}$-$x'_{fp}$, etc.) |
 | `visualize_foil_classification()` | `P_gtr_y` distribution histogram with foil classification ranges annotated |
-| `visualize_target_plane()` | 2D heat map of target-plane coordinates |
+| `visualize_sieve_plane()` | 2D heat map of sieve-plane coordinates |
 | `visualize_benchmark_comparison()` | Bar charts comparing metrics across algorithms |
 | `plot_efficiency_map()` | Efficiency heat map at sieve-hole grid positions (requires grid index) |
 
@@ -840,8 +840,8 @@ print(f"Mean Separability Ratio: {global_metrics['mean_separability_ratio']:.3f}
 |---|---|---|---|
 | `feature_cols` | `['P_dc_x_fp', 'P_dc_y_fp', 'P_dc_xp_fp', 'P_dc_yp_fp']` | list | Focal-plane feature variables |
 | `target_cols` | `['P_gtr_dp', 'P_gtr_th', 'P_gtr_ph', 'P_react_z']` | list | Target-plane variables |
-| `target_x_range` | (−20.0, 20.0) | tuple | `target_x` filter range (cm) |
-| `target_y_range` | (−20.0, 20.0) | tuple | `target_y` filter range (cm) |
+| `sieve_x_range` | (−20.0, 20.0) | tuple | `sieve_x` filter range (cm) |
+| `sieve_y_range` | (−20.0, 20.0) | tuple | `sieve_y` filter range (cm) |
 
 #### `TargetProjectionConfig`
 
@@ -870,8 +870,8 @@ print(f"Mean Separability Ratio: {global_metrics['mean_separability_ratio']:.3f}
 
 | Parameter | Default | Type | Description |
 |---|---|---|---|
-| `x_col` | `'target_x'` | str | X coordinate column name |
-| `y_col` | `'target_y'` | str | Y coordinate column name |
+| `x_col` | `'sieve_x'` | str | X coordinate column name |
+| `y_col` | `'sieve_y'` | str | Y coordinate column name |
 | `eps_range` | (0.01, 0.2) | tuple | eps search range (cm) |
 | `target_clusters` | (50, 70) | tuple | Target cluster count range |
 | `min_samples` | None | int\|None | Minimum neighbor count (None = auto) |
@@ -892,8 +892,8 @@ print(f"Mean Separability Ratio: {global_metrics['mean_separability_ratio']:.3f}
 
 | Parameter | Default | Type | Description |
 |---|---|---|---|
-| `x_col` | `'target_x'` | str | X coordinate column name |
-| `y_col` | `'target_y'` | str | Y coordinate column name |
+| `x_col` | `'sieve_x'` | str | X coordinate column name |
+| `y_col` | `'sieve_y'` | str | Y coordinate column name |
 | `min_cluster_size_range` | (30, 100) | tuple | Search range for `min_cluster_size` |
 | `min_samples_range` | (30, 80) | tuple\|None | Search range for `min_samples` (None = HDBSCAN default) |
 | `target_clusters` | (50, 70) | tuple | Target cluster count range |

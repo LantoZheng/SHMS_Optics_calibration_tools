@@ -328,8 +328,8 @@ def get_foil_subset(
 
 def prepare_clustering_data(
     df: pd.DataFrame,
-    x_col: str = 'target_x',
-    y_col: str = 'target_y',
+    x_col: str = 'sieve_x',
+    y_col: str = 'sieve_y',
     required_cols: Optional[List[str]] = None
 ) -> Tuple[np.ndarray, pd.DataFrame]:
     """
@@ -340,9 +340,9 @@ def prepare_clustering_data(
     df : pd.DataFrame
         Input DataFrame.
     x_col : str, optional
-        Column name for x-coordinate. Default is 'target_x'.
+        Column name for x-coordinate. Default is 'sieve_x'.
     y_col : str, optional
-        Column name for y-coordinate. Default is 'target_y'.
+        Column name for y-coordinate. Default is 'sieve_y'.
     required_cols : list of str, optional
         Additional columns that must be present.
     

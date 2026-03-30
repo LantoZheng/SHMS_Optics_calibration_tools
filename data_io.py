@@ -138,7 +138,7 @@ def get_root_file_info(file_path: str, tree_name: str = "T") -> dict:
     return info
 
 
-def project_to_target(
+def project_to_sieve(
     df: pd.DataFrame,
     x_col: str = 'P_gtr_x',
     y_col: str = 'P_gtr_y',
@@ -148,15 +148,15 @@ def project_to_target(
     config: Optional[TargetProjectionConfig] = None
 ) -> Tuple[np.ndarray, np.ndarray]:
     """
-    Calculate target plane projection from reconstructed variables.
+    Calculate sieve-plane projection from reconstructed variables.
     
     This function projects the reconstructed tracking variables to the
-    target plane using the SHMS optics transformation formulas.
+    sieve plane using the SHMS optics transformation formulas.
     
     The projection formulas are:
     
-    - Target_x = x + th * z_coefficient
-    - Target_y = (-0.019 * dp + 0.00019 * dp² + 213 * ph + y) 
+    - Sieve_x = x + th * z_coefficient
+    - Sieve_y = (-0.019 * dp + 0.00019 * dp² + 213 * ph + y)
                  + 40.0 * (-0.00052 * dp + 0.0000052 * dp² + ph)
     
     Parameters
@@ -180,14 +180,14 @@ def project_to_target(
     Returns
     -------
     tuple of np.ndarray
-        (target_x, target_y) arrays containing the projected coordinates.
+        (sieve_x, sieve_y) arrays containing the projected coordinates.
     
     Examples
     --------
     >>> df = load_root_file("data.root")
-    >>> target_x, target_y = project_to_target(df)
-    >>> df['target_x'] = target_x
-    >>> df['target_y'] = target_y
+    >>> sieve_x, sieve_y = project_to_sieve(df)
+    >>> df['sieve_x'] = sieve_x
+    >>> df['sieve_y'] = sieve_y
     """
     if config is None:
         config = DEFAULT_TARGET_PROJECTION_CONFIG
@@ -198,11 +198,11 @@ def project_to_target(
     ph = df[ph_col].values
     dp = df[dp_col].values
     
-    # Target_x projection
-    target_x = x + th * config.x_z_coefficient
+    # Sieve_x projection
+    sieve_x = x + th * config.x_z_coefficient
     
-    # Target_y projection
-    target_y = (
+    # Sieve_y projection
+    sieve_y = (
         config.y_dp_linear * dp + 
         config.y_dp_quadratic * dp**2 + 
         config.y_ph_coefficient * ph + 
@@ -213,19 +213,19 @@ def project_to_target(
         ph
     )
     
-    return target_x, target_y
+    return sieve_x, sieve_y
 
 
-def add_target_projection(
+def add_sieve_projection(
     df: pd.DataFrame,
     config: Optional[TargetProjectionConfig] = None,
     inplace: bool = False
 ) -> pd.DataFrame:
     """
-    Add target plane projection columns to DataFrame.
+    Add sieve-plane projection columns to DataFrame.
     
-    This is a convenience function that calculates the target plane
-    projection and adds the results as new columns 'target_x' and 'target_y'.
+    This is a convenience function that calculates the sieve-plane
+    projection and adds the results as new columns 'sieve_x' and 'sieve_y'.
     
     Parameters
     ----------
@@ -240,47 +240,47 @@ def add_target_projection(
     Returns
     -------
     pd.DataFrame
-        DataFrame with added 'target_x' and 'target_y' columns.
+        DataFrame with added 'sieve_x' and 'sieve_y' columns.
     
     Examples
     --------
     >>> df = load_root_file("data.root")
-    >>> df = add_target_projection(df)
-    >>> print(df[['target_x', 'target_y']].head())
+    >>> df = add_sieve_projection(df)
+    >>> print(df[['sieve_x', 'sieve_y']].head())
     """
     if not inplace:
         df = df.copy()
     
-    target_x, target_y = project_to_target(df, config=config)
-    df['target_x'] = target_x
-    df['target_y'] = target_y
+    sieve_x, sieve_y = project_to_sieve(df, config=config)
+    df['sieve_x'] = sieve_x
+    df['sieve_y'] = sieve_y
     
     return df
 
 
-def filter_target_range(
+def filter_sieve_range(
     df: pd.DataFrame,
     x_range: Tuple[float, float] = (-20.0, 20.0),
     y_range: Tuple[float, float] = (-20.0, 20.0),
-    target_x_col: str = 'target_x',
-    target_y_col: str = 'target_y',
+    sieve_x_col: str = 'sieve_x',
+    sieve_y_col: str = 'sieve_y',
     verbose: bool = True
 ) -> pd.DataFrame:
     """
-    Filter DataFrame to keep only events within the target plane range.
+    Filter DataFrame to keep only events within the sieve-plane range.
     
     Parameters
     ----------
     df : pd.DataFrame
-        DataFrame with target_x and target_y columns.
+        DataFrame with sieve_x and sieve_y columns.
     x_range : tuple of float, optional
-        (min, max) range for target_x. Default is (-20.0, 20.0).
+        (min, max) range for sieve_x. Default is (-20.0, 20.0).
     y_range : tuple of float, optional
-        (min, max) range for target_y. Default is (-20.0, 20.0).
-    target_x_col : str, optional
-        Column name for target x. Default is 'target_x'.
-    target_y_col : str, optional
-        Column name for target y. Default is 'target_y'.
+        (min, max) range for sieve_y. Default is (-20.0, 20.0).
+    sieve_x_col : str, optional
+        Column name for sieve x. Default is 'sieve_x'.
+    sieve_y_col : str, optional
+        Column name for sieve y. Default is 'sieve_y'.
     verbose : bool, optional
         If True, prints filtering statistics. Default is True.
     
@@ -291,14 +291,14 @@ def filter_target_range(
     
     Examples
     --------
-    >>> df = add_target_projection(load_root_file("data.root"))
-    >>> df_filtered = filter_target_range(df, x_range=(-15, 15))
+    >>> df = add_sieve_projection(load_root_file("data.root"))
+    >>> df_filtered = filter_sieve_range(df, x_range=(-15, 15))
     """
     original_count = len(df)
     
     mask = (
-        (df[target_x_col] >= x_range[0]) & (df[target_x_col] <= x_range[1]) &
-        (df[target_y_col] >= y_range[0]) & (df[target_y_col] <= y_range[1])
+        (df[sieve_x_col] >= x_range[0]) & (df[sieve_x_col] <= x_range[1]) &
+        (df[sieve_y_col] >= y_range[0]) & (df[sieve_y_col] <= y_range[1])
     )
     
     df_filtered = df[mask].copy()
@@ -388,9 +388,9 @@ def load_and_prepare_data(
     tree_name : str, optional
         Name of the TTree to read from. Default is "T".
     add_projection : bool, optional
-        If True, adds target plane projection. Default is True.
+        If True, adds sieve-plane projection. Default is True.
     filter_range : bool, optional
-        If True, filters data to target plane range. Default is True.
+        If True, filters data to sieve-plane range. Default is True.
     data_config : DataLoadingConfig, optional
         Configuration for data loading. If None, uses defaults.
         The ``branches`` field controls which branches are read.
@@ -410,7 +410,7 @@ def load_and_prepare_data(
     Examples
     --------
     >>> df = load_and_prepare_data("data.root")
-    >>> print(df[['target_x', 'target_y', 'P_gtr_y']].head())
+    >>> print(df[['sieve_x', 'sieve_y', 'P_gtr_y']].head())
     
     >>> # Read all branches
     >>> from shms_optics_calibration import DataLoadingConfig
@@ -432,16 +432,16 @@ def load_and_prepare_data(
     if data_config.branch_ranges:
         df = filter_branch_ranges(df, data_config.branch_ranges, verbose=verbose)
     
-    # Add target projection
+    # Add sieve projection
     if add_projection:
-        df = add_target_projection(df, config=projection_config)
+        df = add_sieve_projection(df, config=projection_config)
     
-    # Filter to target range
+    # Filter to sieve range
     if filter_range and add_projection:
-        df = filter_target_range(
+        df = filter_sieve_range(
             df,
-            x_range=data_config.target_x_range,
-            y_range=data_config.target_y_range,
+            x_range=data_config.sieve_x_range,
+            y_range=data_config.sieve_y_range,
             verbose=verbose
         )
     
@@ -472,7 +472,7 @@ def load_simulation_data(
     -------
     pd.DataFrame
         DataFrame with reconstructed and truth columns including:
-        - target_x, target_y: Reconstructed sieve pattern
+        - sieve_x, sieve_y: Reconstructed sieve pattern
         - xsieve_truth, ysieve_truth: Truth sieve positions
         - xsnum, ysnum: Truth sieve hole numbers
         - truth_hole_id: Combined truth hole identifier
@@ -480,7 +480,7 @@ def load_simulation_data(
     Examples
     --------
     >>> df_sim = load_simulation_data("simulation.root")
-    >>> print(df_sim[['target_x', 'target_y', 'truth_hole_id']].head())
+    >>> print(df_sim[['sieve_x', 'sieve_y', 'truth_hole_id']].head())
     """
     if uproot is None:
         raise ImportError(
@@ -540,8 +540,8 @@ def load_simulation_data(
     
     # Create DataFrame
     df_sim = pd.DataFrame({
-        'target_x': sv_v,
-        'target_y': sv_h,
+        'sieve_x': sv_v,
+        'sieve_y': sv_h,
         'xsieve_truth': xsieve,
         'ysieve_truth': ysieve,
         'xsnum': xsnum,

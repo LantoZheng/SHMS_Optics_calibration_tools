@@ -48,8 +48,8 @@ class DataLoadingConfig:
     Attributes:
         feature_cols: List of focal plane variable column names.
         target_cols: List of target variable column names.
-        target_x_range: Tuple (min, max) for filtering target_x values.
-        target_y_range: Tuple (min, max) for filtering target_y values.
+        sieve_x_range: Tuple (min, max) for filtering sieve_x values.
+        sieve_y_range: Tuple (min, max) for filtering sieve_y values.
         branches: List of branch names to read from ROOT files.
             Defaults to DEFAULT_BRANCHES (focal plane, target reconstruction,
             and reaction vertex columns). Set to None to read all branches.
@@ -60,8 +60,8 @@ class DataLoadingConfig:
     """
     feature_cols: List[str] = field(default_factory=lambda: FEATURE_COLS.copy())
     target_cols: List[str] = field(default_factory=lambda: TARGET_COLS.copy())
-    target_x_range: Tuple[float, float] = (-20.0, 20.0)
-    target_y_range: Tuple[float, float] = (-20.0, 20.0)
+    sieve_x_range: Tuple[float, float] = (-20.0, 20.0)
+    sieve_y_range: Tuple[float, float] = (-20.0, 20.0)
     branches: Optional[List[str]] = field(default_factory=lambda: DEFAULT_BRANCHES.copy())
     branch_ranges: Optional[Dict[str, Tuple[float, float]]] = None
 
@@ -71,15 +71,15 @@ class TargetProjectionConfig:
     """Configuration for target plane projection calculation.
     
     The projection formula is based on the SHMS optics:
-    - Target_x = x + th * z_coefficient
-    - Target_y = (-0.019 * dp + 0.00019 * dp² + (138.0 + 75.0) * ph + y) 
+    - Sieve_x = x + th * z_coefficient
+    - Sieve_y = (-0.019 * dp + 0.00019 * dp² + (138.0 + 75.0) * ph + y)
                  + 40.0 * (-0.00052 * dp + 0.0000052 * dp² + ph)
     
     Attributes:
-        x_z_coefficient: Z coefficient for target_x projection.
-        y_dp_linear: Linear dp coefficient for target_y.
-        y_dp_quadratic: Quadratic dp coefficient for target_y.
-        y_ph_coefficient: ph coefficient for target_y (138.0 + 75.0).
+        x_z_coefficient: Z coefficient for sieve_x projection.
+        y_dp_linear: Linear dp coefficient for sieve_y.
+        y_dp_quadratic: Quadratic dp coefficient for sieve_y.
+        y_ph_coefficient: ph coefficient for sieve_y (138.0 + 75.0).
         y_offset_dp_linear: Offset dp linear coefficient.
         y_offset_dp_quadratic: Offset dp quadratic coefficient.
         y_offset_multiplier: Multiplier for offset term.
@@ -131,8 +131,8 @@ class DBSCANConfig:
         distance_threshold: Minimum distance between cluster centers.
         max_cluster_size: Maximum allowed cluster size in cm.
     """
-    x_col: str = 'target_x'
-    y_col: str = 'target_y'
+    x_col: str = 'sieve_x'
+    y_col: str = 'sieve_y'
     eps_range: Tuple[float, float] = (0.01, 0.2)
     target_clusters: Tuple[int, int] = (50, 70)
     min_samples: Optional[int] = None
@@ -182,8 +182,8 @@ class HDBSCANConfig:
         metric: Distance metric.
         alpha: Alpha parameter for HDBSCAN.
     """
-    x_col: str = 'target_x'
-    y_col: str = 'target_y'
+    x_col: str = 'sieve_x'
+    y_col: str = 'sieve_y'
     min_cluster_size_range: Tuple[int, int] = (30, 100)
     min_samples_range: Optional[Tuple[int, int]] = (30, 80)
     target_clusters: Tuple[int, int] = (50, 70)

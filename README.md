@@ -173,9 +173,9 @@ print(f"Mean Efficiency: {overall['mean_efficiency']:.4f}")
 | `load_root_file` | Load ROOT file into pandas DataFrame |
 | `load_and_prepare_data` | Load, project, and filter data |
 | `load_simulation_data` | Load simulation data with truth labels |
-| `project_to_target` | Calculate target plane projection |
-| `add_target_projection` | Add target_x, target_y columns |
-| `filter_target_range` | Filter data to target plane range |
+| `project_to_sieve` | Calculate sieve-plane projection |
+| `add_sieve_projection` | Add sieve_x, sieve_y columns |
+| `filter_sieve_range` | Filter data to sieve-plane range |
 
 ### Preprocessing (`preprocessing`)
 
@@ -203,7 +203,7 @@ print(f"Mean Efficiency: {overall['mean_efficiency']:.4f}")
 | `visualize_clustering_summary` | Multi-panel clustering summary |
 | `visualize_clusters_in_focal_plane` | Focal plane projections |
 | `visualize_foil_classification` | Foil classification histogram |
-| `visualize_target_plane` | Target plane 2D histogram |
+| `visualize_sieve_plane` | Sieve-plane 2D histogram |
 | `visualize_benchmark_comparison` | Algorithm comparison plots |
 | `plot_efficiency_map` | Efficiency map visualization |
 
@@ -267,14 +267,14 @@ The SHMS (Super High Momentum Spectrometer) is part of the experimental equipmen
 
 - **Focal Plane**: P_dc_x_fp, P_dc_y_fp, P_dc_xp_fp, P_dc_yp_fp
 - **Target Variables**: P_gtr_x, P_gtr_y, P_gtr_th, P_gtr_ph, P_gtr_dp
-- **Target Projection**: target_x, target_y (reconstructed sieve pattern)
+- **Sieve Coordinates**: sieve_x, sieve_y (reconstructed sieve-plane pattern)
 
-### Target Projection Formula
+### Sieve-Plane Projection Formula
 
 ```
-target_x = x + th * 253.0
+sieve_x = x + th * 253.0
 
-target_y = (-0.019 * dp + 0.00019 * dp² + 213 * ph + y) 
+sieve_y = (-0.019 * dp + 0.00019 * dp² + 213 * ph + y)
          + 40.0 * (-0.00052 * dp + 0.0000052 * dp² + ph)
 ```
 

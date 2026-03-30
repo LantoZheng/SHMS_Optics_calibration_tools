@@ -39,8 +39,8 @@ def _check_matplotlib():
 
 def visualize_dbscan_results(
     df: pd.DataFrame,
-    x_col: str = 'target_x',
-    y_col: str = 'target_y',
+    x_col: str = 'sieve_x',
+    y_col: str = 'sieve_y',
     best_eps: Optional[float] = None,
     n_clusters: int = 0,
     figsize: Tuple[int, int] = (10, 10),
@@ -62,9 +62,9 @@ def visualize_dbscan_results(
         DataFrame with clustering results (must have 'cluster' and 
         'is_noise' columns).
     x_col : str, optional
-        Column name for x-coordinate. Default is 'target_x'.
+        Column name for x-coordinate. Default is 'sieve_x'.
     y_col : str, optional
-        Column name for y-coordinate. Default is 'target_y'.
+        Column name for y-coordinate. Default is 'sieve_y'.
     best_eps : float, optional
         Eps parameter to display in title.
     n_clusters : int, optional
@@ -177,8 +177,8 @@ def visualize_dbscan_results(
 
 def visualize_clustering_summary(
     df: pd.DataFrame,
-    x_col: str = 'target_x',
-    y_col: str = 'target_y',
+    x_col: str = 'sieve_x',
+    y_col: str = 'sieve_y',
     n_clusters: int = 0,
     figsize: Tuple[int, int] = (14, 12),
     xlim: Tuple[float, float] = (-20, 20),
@@ -200,9 +200,9 @@ def visualize_clustering_summary(
     df : pd.DataFrame
         DataFrame with clustering results.
     x_col : str, optional
-        Column name for x-coordinate. Default is 'target_x'.
+        Column name for x-coordinate. Default is 'sieve_x'.
     y_col : str, optional
-        Column name for y-coordinate. Default is 'target_y'.
+        Column name for y-coordinate. Default is 'sieve_y'.
     n_clusters : int, optional
         Number of clusters for title.
     figsize : tuple of int, optional
@@ -569,28 +569,28 @@ def visualize_foil_classification(
     return fig
 
 
-def visualize_target_plane(
+def visualize_sieve_plane(
     df: pd.DataFrame,
-    x_col: str = 'target_x',
-    y_col: str = 'target_y',
+    x_col: str = 'sieve_x',
+    y_col: str = 'sieve_y',
     bins: int = 200,
     xlim: Tuple[float, float] = (-20, 20),
     ylim: Tuple[float, float] = (-20, 20),
     figsize: Tuple[int, int] = (10, 10),
-    title: str = 'Target Plane Reconstruction',
+    title: str = 'Sieve Plane Reconstruction',
     show: bool = True
 ) -> plt.Figure:
     """
-    Visualize target plane reconstruction as 2D histogram.
+    Visualize sieve-plane reconstruction as 2D histogram.
     
     Parameters
     ----------
     df : pd.DataFrame
-        DataFrame with target coordinates.
+        DataFrame with sieve-plane coordinates.
     x_col : str, optional
-        Column name for x-coordinate. Default is 'target_x'.
+        Column name for x-coordinate. Default is 'sieve_x'.
     y_col : str, optional
-        Column name for y-coordinate. Default is 'target_y'.
+        Column name for y-coordinate. Default is 'sieve_y'.
     bins : int, optional
         Number of bins for histogram. Default is 200.
     xlim : tuple of float, optional
@@ -600,7 +600,7 @@ def visualize_target_plane(
     figsize : tuple of int, optional
         Figure size. Default is (10, 10).
     title : str, optional
-        Plot title. Default is 'Target Plane Reconstruction'.
+        Plot title. Default is 'Sieve Plane Reconstruction'.
     show : bool, optional
         If True, displays the figure. Default is True.
     
@@ -612,7 +612,7 @@ def visualize_target_plane(
     Examples
     --------
     >>> df = load_and_prepare_data("data.root")
-    >>> fig = visualize_target_plane(df)
+    >>> fig = visualize_sieve_plane(df)
     """
     _check_matplotlib()
     

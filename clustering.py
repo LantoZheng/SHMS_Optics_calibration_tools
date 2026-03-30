@@ -52,8 +52,8 @@ _MAX_CLUSTER_SIZE_RATIO = 5.0
 
 def auto_dbscan_clustering(
     df: pd.DataFrame,
-    x_col: str = 'target_x',
-    y_col: str = 'target_y',
+    x_col: str = 'sieve_x',
+    y_col: str = 'sieve_y',
     eps_range: Tuple[float, float] = (0.01, 0.2),
     target_clusters: Tuple[int, int] = (50, 70),
     min_samples: Optional[int] = None,
@@ -80,9 +80,9 @@ def auto_dbscan_clustering(
     df : pd.DataFrame
         Input DataFrame with coordinate columns.
     x_col : str, optional
-        Column name for x-coordinate. Default is 'target_x'.
+        Column name for x-coordinate. Default is 'sieve_x'.
     y_col : str, optional
-        Column name for y-coordinate. Default is 'target_y'.
+        Column name for y-coordinate. Default is 'sieve_y'.
     eps_range : tuple of float, optional
         (min, max) range for eps parameter search. Default is (0.01, 0.2).
     target_clusters : tuple of int, optional
@@ -375,8 +375,8 @@ def auto_dbscan_clustering(
 
 def peel_and_cluster_edges(
     df: pd.DataFrame,
-    x_col: str = 'target_x',
-    y_col: str = 'target_y',
+    x_col: str = 'sieve_x',
+    y_col: str = 'sieve_y',
     radius: Optional[float] = None,
     eps: Optional[float] = None,
     min_samples: Optional[int] = None,
@@ -405,9 +405,9 @@ def peel_and_cluster_edges(
         DataFrame with initial clustering results (must have 'cluster' and
         'is_noise' columns from first DBSCAN pass).
     x_col : str, optional
-        Column name for x-coordinate. Default is 'target_x'.
+        Column name for x-coordinate. Default is 'sieve_x'.
     y_col : str, optional
-        Column name for y-coordinate. Default is 'target_y'.
+        Column name for y-coordinate. Default is 'sieve_y'.
     radius : float, optional
         Convex hull expansion radius. If None, searches optimal value.
     eps : float, optional
@@ -649,8 +649,8 @@ def peel_and_cluster_edges(
 
 def two_entry_dbscan(
     df: pd.DataFrame,
-    x_col: str = 'target_x',
-    y_col: str = 'target_y',
+    x_col: str = 'sieve_x',
+    y_col: str = 'sieve_y',
     core_config: Optional[DBSCANConfig] = None,
     edge_config: Optional[EdgeClusteringConfig] = None,
     drop_noise: bool = True,
@@ -668,9 +668,9 @@ def two_entry_dbscan(
     df : pd.DataFrame
         Input DataFrame with coordinate columns.
     x_col : str, optional
-        Column name for x-coordinate. Default is 'target_x'.
+        Column name for x-coordinate. Default is 'sieve_x'.
     y_col : str, optional
-        Column name for y-coordinate. Default is 'target_y'.
+        Column name for y-coordinate. Default is 'sieve_y'.
     core_config : DBSCANConfig, optional
         Configuration for core clustering.
     edge_config : EdgeClusteringConfig, optional
@@ -755,8 +755,8 @@ def two_entry_dbscan(
 
 def auto_hdbscan_clustering(
     df: pd.DataFrame,
-    x_col: str = 'target_x',
-    y_col: str = 'target_y',
+    x_col: str = 'sieve_x',
+    y_col: str = 'sieve_y',
     min_cluster_size_range: Tuple[int, int] = (30, 100),
     min_samples_range: Optional[Tuple[int, int]] = (30, 80),
     target_clusters: Tuple[int, int] = (50, 70),
@@ -783,9 +783,9 @@ def auto_hdbscan_clustering(
     df : pd.DataFrame
         Input DataFrame with coordinate columns.
     x_col : str, optional
-        Column name for x-coordinate. Default is 'target_x'.
+        Column name for x-coordinate. Default is 'sieve_x'.
     y_col : str, optional
-        Column name for y-coordinate. Default is 'target_y'.
+        Column name for y-coordinate. Default is 'sieve_y'.
     min_cluster_size_range : tuple of int, optional
         (min, max) range for min_cluster_size search. Default is (30, 100).
     min_samples_range : tuple of int, optional
@@ -1044,8 +1044,8 @@ def cluster_by_foil_position(
     df: pd.DataFrame,
     method: str = 'dbscan',
     foil_col: str = 'foil_position',
-    x_col: str = 'target_x',
-    y_col: str = 'target_y',
+    x_col: str = 'sieve_x',
+    y_col: str = 'sieve_y',
     dbscan_config: Optional[DBSCANConfig] = None,
     edge_config: Optional[EdgeClusteringConfig] = None,
     hdbscan_config: Optional[HDBSCANConfig] = None,
@@ -1068,9 +1068,9 @@ def cluster_by_foil_position(
     foil_col : str, optional
         Column name for foil position. Default is 'foil_position'.
     x_col : str, optional
-        Column name for x-coordinate. Default is 'target_x'.
+        Column name for x-coordinate. Default is 'sieve_x'.
     y_col : str, optional
-        Column name for y-coordinate. Default is 'target_y'.
+        Column name for y-coordinate. Default is 'sieve_y'.
     dbscan_config : DBSCANConfig, optional
         Configuration for DBSCAN clustering.
     edge_config : EdgeClusteringConfig, optional
