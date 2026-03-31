@@ -13,10 +13,12 @@ import pandas as pd
 
 try:
     from sklearn.cluster import DBSCAN
+    from sklearn.neighbors import NearestNeighbors
     from scipy.spatial.distance import pdist, cdist
     from scipy.spatial import ConvexHull
 except ImportError:
     DBSCAN = None
+    NearestNeighbors = None
     pdist = None
     cdist = None
     ConvexHull = None
@@ -48,6 +50,238 @@ _NOISE_RATIO_THRESHOLD = 0.3
 _MIN_CLUSTER_EVENTS = 10
 _MIN_CLUSTER_SIZE_RATIO = 0.1
 _MAX_CLUSTER_SIZE_RATIO = 5.0
+_MAX_ESTIMATION_POINTS = 20000
+
+
+def _sample_points_for_estimation(
+    data: np.ndarray,
+    max_points: int = _MAX_ESTIMATION_POINTS,
+    random_seed: int = 42
+) -> np.ndarray:
+    """Subsample points for fast parameter estimation."""
+    if len(data) <= max_points:
+        return data
+    rng = np.random.default_rng(random_seed)
+    idx = rng.choice(len(data), size=max_points, replace=False)
+    return data[idx]
+
+
+def _estimate_k_distance(
+    data: np.ndarray,
+    k: int
+) -> Optional[np.ndarray]:
+    """Estimate k-NN distance distribution for adaptive eps tuning."""
+    if NearestNeighbors is None or len(data) < 3:
+        return None
+
+    sampled = _sample_points_for_estimation(data)
+    if len(sampled) < 3:
+        return None
+
+    k_eff = int(np.clip(k, 2, min(25, len(sampled) - 1)))
+    if k_eff < 2:
+        return None
+
+    nn = NearestNeighbors(n_neighbors=k_eff + 1)
+    nn.fit(sampled)
+    distances, _ = nn.kneighbors(sampled)
+    kth = distances[:, -1]
+    kth = kth[np.isfinite(kth)]
+    if len(kth) == 0:
+        return None
+    return kth
+
+
+def _estimate_nearest_neighbor_spacing(data: np.ndarray) -> Optional[float]:
+    """Estimate characteristic spacing using nearest-neighbor median."""
+    if NearestNeighbors is None or len(data) < 2:
+        return None
+
+    sampled = _sample_points_for_estimation(data)
+    if len(sampled) < 2:
+        return None
+
+    nn = NearestNeighbors(n_neighbors=2)
+    nn.fit(sampled)
+    distances, _ = nn.kneighbors(sampled)
+    nearest = distances[:, 1]
+    nearest = nearest[(nearest > 0) & np.isfinite(nearest)]
+    if len(nearest) == 0:
+        return None
+    return float(np.median(nearest))
+
+
+def _build_adaptive_eps_candidates(
+    data: np.ndarray,
+    min_samples_for_knn: int,
+    eps_range: Tuple[float, float],
+    n_linear: int = 10
+) -> np.ndarray:
+    """Build eps candidates using both bounds and k-distance statistics."""
+    eps_min, eps_max = eps_range
+    if eps_min >= eps_max:
+        return np.array([eps_min])
+
+    linear = np.linspace(eps_min, eps_max, n_linear)
+    k_dist = _estimate_k_distance(data, k=max(4, int(min_samples_for_knn * 0.5)))
+    if k_dist is None:
+        return linear
+
+    q30 = float(np.quantile(k_dist, 0.30))
+    q97 = float(np.quantile(k_dist, 0.97))
+    data_low = max(eps_min, q30 * 0.90)
+    data_high = min(eps_max, q97 * 1.15)
+    if data_low >= data_high:
+        data_low, data_high = eps_min, eps_max
+
+    adaptive_linear = np.linspace(data_low, data_high, n_linear)
+    quantile_pts = np.quantile(k_dist, [0.40, 0.55, 0.70, 0.82, 0.90, 0.96])
+    merged = np.concatenate([linear, adaptive_linear, quantile_pts])
+    merged = np.unique(np.clip(merged, eps_min, eps_max))
+    merged = np.sort(merged)
+
+    if len(merged) < 5:
+        return np.linspace(eps_min, eps_max, n_linear)
+    return merged
+
+
+def suggest_adaptive_clustering_configs(
+    df: pd.DataFrame,
+    x_col: str = 'sieve_x',
+    y_col: str = 'sieve_y',
+    expected_clusters: Optional[int] = None,
+    target_margin: float = 0.2,
+    verbose: bool = True
+) -> Tuple[DBSCANConfig, EdgeClusteringConfig, Dict[str, Any]]:
+    """
+    Suggest data-adaptive DBSCAN and edge-clustering configurations.
+
+    This helper estimates characteristic density and spacing from the input
+    points, then constructs conservative-yet-adaptive search ranges for:
+    - core DBSCAN eps / min_samples / distance_threshold / max_cluster_size
+    - edge clustering radius / eps / target_new_clusters / distance_threshold
+
+    Parameters
+    ----------
+    df : pd.DataFrame
+        Input DataFrame with x_col and y_col.
+    x_col, y_col : str
+        Coordinate columns for clustering.
+    expected_clusters : int, optional
+        If provided, use this as target center; otherwise infer from a quick
+        provisional DBSCAN pass.
+    target_margin : float
+        Relative margin around inferred/expected cluster count.
+    verbose : bool
+        If True, print estimated statistics and suggested ranges.
+
+    Returns
+    -------
+    tuple
+        (core_config, edge_config, metadata)
+    """
+    if DBSCAN is None:
+        raise ImportError(
+            "sklearn is required for adaptive clustering config suggestion. "
+            "Install it with: pip install scikit-learn"
+        )
+
+    data = df[[x_col, y_col]].dropna().values
+    if len(data) < 50:
+        raise ValueError("At least 50 valid points are required for adaptive suggestion.")
+
+    n_points = len(data)
+    base_min_samples = int(np.clip(np.sqrt(n_points) * 0.25, 8, 80))
+    eps_candidates = _build_adaptive_eps_candidates(
+        data=data,
+        min_samples_for_knn=base_min_samples,
+        eps_range=(0.03, 0.50),
+        n_linear=12
+    )
+
+    eps_mid = float(np.median(eps_candidates))
+    db_quick = DBSCAN(eps=eps_mid, min_samples=base_min_samples, n_jobs=-1)
+    labels_quick = db_quick.fit_predict(data)
+    n_quick_clusters = len(set(labels_quick)) - (1 if -1 in labels_quick else 0)
+
+    if expected_clusters is None:
+        if n_quick_clusters > 0:
+            target_center = n_quick_clusters
+        else:
+            target_center = 60
+    else:
+        target_center = int(expected_clusters)
+
+    low = max(10, int(np.floor(target_center * (1.0 - target_margin))))
+    high = max(low + 5, int(np.ceil(target_center * (1.0 + target_margin))))
+
+    centers_quick = []
+    for k in set(labels_quick):
+        if k == -1:
+            continue
+        centers_quick.append(data[labels_quick == k].mean(axis=0))
+    centers_quick = np.array(centers_quick) if len(centers_quick) > 0 else np.empty((0, 2))
+
+    spacing = _estimate_nearest_neighbor_spacing(centers_quick)
+    if spacing is None:
+        spacing = _estimate_nearest_neighbor_spacing(data)
+    if spacing is None:
+        spacing = 1.5
+
+    distance_threshold = float(np.clip(0.60 * spacing, 0.7, 1.8))
+    max_cluster_size = float(np.clip(1.35 * spacing, 1.6, 2.8))
+
+    core_cfg = DBSCANConfig(
+        x_col=x_col,
+        y_col=y_col,
+        eps_range=(float(eps_candidates.min()), float(eps_candidates.max())),
+        target_clusters=(low, high),
+        min_samples=base_min_samples,
+        distance_threshold=distance_threshold,
+        max_cluster_size=max_cluster_size,
+        drop_noise=True
+    )
+
+    edge_eps_min = float(np.clip(core_cfg.eps_range[0] * 0.85, 0.03, 0.60))
+    edge_eps_max = float(np.clip(core_cfg.eps_range[1] * 1.25, edge_eps_min + 1e-3, 0.60))
+    edge_eps_candidates = np.linspace(edge_eps_min, edge_eps_max, 8)
+
+    # Include negative/zero/positive radii to avoid over-expanding hull only.
+    radius_base = float(np.clip(0.25 * spacing, 0.15, 0.9))
+    radius_candidates = sorted(set([
+        -1.4 * radius_base,
+        -0.8 * radius_base,
+        0.0,
+        0.8 * radius_base,
+        1.4 * radius_base,
+    ]))
+
+    edge_target_high = max(5, int(np.ceil(0.25 * high)))
+    edge_cfg = EdgeClusteringConfig(
+        radius_candidates=[float(r) for r in radius_candidates],
+        eps_candidates=[float(e) for e in edge_eps_candidates],
+        target_new_clusters=(0, edge_target_high),
+        distance_threshold=distance_threshold,
+    )
+
+    metadata = {
+        'n_points': n_points,
+        'quick_clusters': n_quick_clusters,
+        'estimated_spacing': spacing,
+        'base_min_samples': base_min_samples,
+        'eps_candidates_preview': [float(v) for v in eps_candidates[:6]],
+    }
+
+    if verbose:
+        print("[Adaptive Suggestion]")
+        print(f"  points={n_points:,}, quick_clusters={n_quick_clusters}")
+        print(f"  estimated spacing={spacing:.3f} cm")
+        print(f"  core eps_range={core_cfg.eps_range}, min_samples={core_cfg.min_samples}")
+        print(f"  core target_clusters={core_cfg.target_clusters}")
+        print(f"  distance_threshold={distance_threshold:.3f}, max_cluster_size={max_cluster_size:.3f}")
+        print(f"  edge target_new_clusters={edge_cfg.target_new_clusters}")
+
+    return core_cfg, edge_cfg, metadata
 
 
 def auto_dbscan_clustering(
@@ -149,22 +383,27 @@ def auto_dbscan_clustering(
     df = df.copy()
     data = df[[x_col, y_col]].values
     
-    # Set min_samples search range
+    # Set min_samples search range (adaptive by data scale)
     if min_samples is None:
-        base_min_samples = max(1, int(len(data) / 1000))
+        base_min_samples = int(np.clip(np.sqrt(len(data)) * 0.25, 8, 80))
         min_samples_candidates = [
-            max(1, int(base_min_samples * 0.5)),
-            max(1, int(base_min_samples * 0.75)),
+            max(4, int(base_min_samples * 0.6)),
+            max(4, int(base_min_samples * 0.8)),
             base_min_samples,
-            max(1, int(base_min_samples * 1.25)),
-            max(1, int(base_min_samples * 1.5))
+            max(4, int(base_min_samples * 1.2)),
+            max(4, int(base_min_samples * 1.5))
         ]
         min_samples_candidates = sorted(list(set(min_samples_candidates)))
     else:
         min_samples_candidates = [min_samples]
     
-    # eps candidates
-    eps_candidates = np.linspace(eps_range[0], eps_range[1], 10)
+    # eps candidates (adaptive + bounded by requested range)
+    eps_candidates = _build_adaptive_eps_candidates(
+        data=data,
+        min_samples_for_knn=min_samples_candidates[len(min_samples_candidates) // 2],
+        eps_range=eps_range,
+        n_linear=10
+    )
     
     target_low, target_high = target_clusters
     best_eps = None
@@ -453,19 +692,26 @@ def peel_and_cluster_edges(
     # Use config if provided
     if config is not None:
         radius_candidates = config.radius_candidates
-        eps_candidates = config.eps_candidates
+        eps_candidates_base = config.eps_candidates
         target_new_clusters = config.target_new_clusters
         distance_threshold = config.distance_threshold
     else:
         if radius is None:
-            radius_candidates = [0.3, 0.5, 0.8, 1.0, 1.5]
+            # Include negative/zero/positive radii for robust edge peeling.
+            radius_candidates = [-0.6, -0.3, 0.0, 0.3, 0.6, 1.0]
         else:
             radius_candidates = [radius]
         
         if eps is None:
-            eps_candidates = [0.05, 0.08, 0.10, 0.12, 0.15, 0.18, 0.20]
+            eps_candidates_base = [0.05, 0.08, 0.10, 0.12, 0.15, 0.18, 0.20]
         else:
-            eps_candidates = [eps]
+            eps_candidates_base = [eps]
+
+    # Ensure radius search includes boundary-friendly options.
+    if all(r > 0 for r in radius_candidates):
+        radius_candidates = sorted(set(radius_candidates + [0.0, -0.5 * min(radius_candidates)]))
+    else:
+        radius_candidates = sorted(set(radius_candidates))
     
     df = df.copy()
     
@@ -483,26 +729,25 @@ def peel_and_cluster_edges(
             print("Core region has too few points, cannot build convex hull.")
         return df, eps if eps else 0.1, 0
     
-    # Set min_samples candidates
-    if min_samples is None:
-        base_min_samples = max(1, int(len(data) / 1000))
-        min_samples_candidates = [
-            max(1, int(base_min_samples * 0.5)),
-            max(1, int(base_min_samples * 0.75)),
-            base_min_samples,
-            max(1, int(base_min_samples * 1.25)),
-            max(1, int(base_min_samples * 1.5))
-        ]
-        min_samples_candidates = sorted(list(set(min_samples_candidates)))
-    else:
-        min_samples_candidates = [min_samples]
+    # Estimate spacing from core centers to adapt distance threshold.
+    core_centers = df[core_mask].groupby('cluster')[[x_col, y_col]].mean().values
+    core_spacing = _estimate_nearest_neighbor_spacing(core_centers) if len(core_centers) > 1 else None
+    adaptive_distance_threshold = distance_threshold
+    if core_spacing is not None:
+        adaptive_distance_threshold = min(
+            distance_threshold,
+            float(np.clip(0.65 * core_spacing, 0.7, 1.8))
+        )
     
     if verbose:
         print(f"Parameter search space:")
         print(f"  radius: {radius_candidates}")
-        print(f"  eps: {eps_candidates}")
-        print(f"  min_samples: {min_samples_candidates}")
+        print(f"  eps(base): {eps_candidates_base}")
+        print(f"  min_samples: adaptive per edge region")
         print(f"  target new edge clusters: {target_new_clusters[0]}-{target_new_clusters[1]}")
+        if core_spacing is not None:
+            print(f"  adaptive distance threshold: {adaptive_distance_threshold:.3f} "
+                  f"(base={distance_threshold:.3f}, spacing={core_spacing:.3f})")
     
     # Grid search for optimal parameters
     best_params = None
@@ -530,6 +775,32 @@ def peel_and_cluster_edges(
         if len(data_edge) < 10:
             continue
         
+        if min_samples is None:
+            local_base_min = int(np.clip(np.sqrt(len(data_edge)) * 0.35, 4, 50))
+            min_samples_candidates = sorted(list(set([
+                max(3, int(local_base_min * 0.6)),
+                max(3, int(local_base_min * 0.8)),
+                local_base_min,
+                max(3, int(local_base_min * 1.25)),
+                max(3, int(local_base_min * 1.5))
+            ])))
+        else:
+            min_samples_candidates = [min_samples]
+
+        if eps is None:
+            eps_from_edge = _build_adaptive_eps_candidates(
+                data=data_edge,
+                min_samples_for_knn=min_samples_candidates[0],
+                eps_range=(min(eps_candidates_base), max(eps_candidates_base)),
+                n_linear=8
+            )
+            eps_candidates = sorted(set(
+                [float(v) for v in eps_candidates_base] +
+                [float(v) for v in eps_from_edge]
+            ))
+        else:
+            eps_candidates = eps_candidates_base
+
         for eps_val in eps_candidates:
             for min_s in min_samples_candidates:
                 total_attempts += 1
@@ -551,7 +822,7 @@ def peel_and_cluster_edges(
                     # Check distances between new clusters
                     valid = True
                     if len(new_centers) > 1:
-                        if pdist(new_centers).min() < distance_threshold:
+                        if pdist(new_centers).min() < adaptive_distance_threshold:
                             valid = False
                     
                     # Check distances to existing core clusters
@@ -559,7 +830,7 @@ def peel_and_cluster_edges(
                         core_centers = df[core_mask].groupby('cluster')[
                             [x_col, y_col]
                         ].mean().values
-                        if cdist(new_centers, core_centers).min() < distance_threshold:
+                        if cdist(new_centers, core_centers).min() < adaptive_distance_threshold:
                             valid = False
                     
                     if valid and target_low <= n_new <= target_high:
@@ -591,6 +862,32 @@ def peel_and_cluster_edges(
             if len(data_edge) < 10:
                 continue
             
+            if min_samples is None:
+                local_base_min = int(np.clip(np.sqrt(len(data_edge)) * 0.35, 4, 50))
+                min_samples_candidates = sorted(list(set([
+                    max(3, int(local_base_min * 0.6)),
+                    max(3, int(local_base_min * 0.8)),
+                    local_base_min,
+                    max(3, int(local_base_min * 1.25)),
+                    max(3, int(local_base_min * 1.5))
+                ])))
+            else:
+                min_samples_candidates = [min_samples]
+
+            if eps is None:
+                eps_from_edge = _build_adaptive_eps_candidates(
+                    data=data_edge,
+                    min_samples_for_knn=min_samples_candidates[0],
+                    eps_range=(min(eps_candidates_base), max(eps_candidates_base)),
+                    n_linear=8
+                )
+                eps_candidates = sorted(set(
+                    [float(v) for v in eps_candidates_base] +
+                    [float(v) for v in eps_from_edge]
+                ))
+            else:
+                eps_candidates = eps_candidates_base
+
             for eps_val in eps_candidates:
                 for min_s in min_samples_candidates:
                     db_edge = DBSCAN(eps=eps_val, min_samples=min_s, n_jobs=-1)
@@ -950,24 +1247,115 @@ def auto_hdbscan_clustering(
     if verbose:
         print(f"\nSearch complete ({total_attempts} parameter combinations tried)")
     
-    # Safety check
+    # Fallback search: if no strict candidate in target range, find the
+    # closest physically-valid candidate instead of blindly using smallest
+    # min_cluster_size/min_samples (which often over-splits holes).
     if best_params is None:
         if verbose:
-            print("⚠️ Warning: No valid parameters found, using defaults")
-        best_params = {
-            'min_cluster_size': min_cluster_sizes[0],
-            'min_samples': min_samples_candidates[0]
-        }
-        
-        clusterer = hdbscan_lib.HDBSCAN(
-            min_cluster_size=best_params['min_cluster_size'],
-            min_samples=best_params['min_samples'],
-            cluster_selection_method=cluster_selection_method,
-            metric=metric,
-            alpha=alpha
-        )
-        best_labels = clusterer.fit_predict(data)
-        best_n_clusters = len(set(best_labels)) - (1 if -1 in best_labels else 0)
+            print("⚠️ No strict in-range candidate found, searching closest valid candidate...")
+
+        fallback_best_score = float('inf')
+        fallback_best_params = None
+        fallback_best_labels = None
+        fallback_best_n_clusters = 0
+
+        for min_size in min_cluster_sizes:
+            for min_samp in min_samples_candidates:
+                clusterer = hdbscan_lib.HDBSCAN(
+                    min_cluster_size=min_size,
+                    min_samples=min_samp,
+                    cluster_selection_method=cluster_selection_method,
+                    metric=metric,
+                    alpha=alpha
+                )
+
+                labels = clusterer.fit_predict(data)
+                n_clusters = len(set(labels)) - (1 if -1 in labels else 0)
+                if n_clusters <= 0:
+                    continue
+
+                # Re-check physical constraints
+                min_center_dist = float('inf')
+                valid_size = True
+                cluster_centers = []
+
+                for k in set(labels):
+                    if k == -1:
+                        continue
+                    cluster_points = data[labels == k]
+
+                    x_size = cluster_points[:, 0].max() - cluster_points[:, 0].min()
+                    y_size = cluster_points[:, 1].max() - cluster_points[:, 1].min()
+                    if x_size > max_cluster_size or y_size > max_cluster_size:
+                        valid_size = False
+                        break
+
+                    cluster_centers.append(cluster_points.mean(axis=0))
+
+                if not valid_size:
+                    continue
+
+                cluster_centers = np.array(cluster_centers)
+                if n_clusters > 1 and len(cluster_centers) > 1:
+                    min_center_dist = pdist(cluster_centers).min()
+
+                if n_clusters > 1 and min_center_dist <= distance_threshold:
+                    continue
+
+                # Score by closeness to target center; tie-break toward less
+                # fragmentation (larger min_cluster_size) and fewer clusters.
+                score = abs(n_clusters - target_center)
+                tie_break = (
+                    -min_size,          # prefer larger clusters
+                    - (min_samp if min_samp is not None else 0),
+                    -min_center_dist if np.isfinite(min_center_dist) else float('-inf'),
+                    -n_clusters
+                )
+
+                if (score < fallback_best_score or
+                    (score == fallback_best_score and fallback_best_params is not None and tie_break > (
+                        -fallback_best_params['min_cluster_size'],
+                        -(fallback_best_params['min_samples'] if fallback_best_params['min_samples'] is not None else 0),
+                        float('-inf'),
+                        -fallback_best_n_clusters
+                    ))):
+                    fallback_best_score = score
+                    fallback_best_params = {
+                        'min_cluster_size': min_size,
+                        'min_samples': min_samp
+                    }
+                    fallback_best_labels = labels.copy()
+                    fallback_best_n_clusters = n_clusters
+
+        if fallback_best_params is not None:
+            best_params = fallback_best_params
+            best_labels = fallback_best_labels
+            best_n_clusters = fallback_best_n_clusters
+            if verbose:
+                print(f"Using closest valid parameters: {best_params}, clusters={best_n_clusters}")
+        else:
+            if verbose:
+                print("⚠️ Warning: No physically valid candidate found, using conservative defaults")
+            conservative_min_size = int(np.median(min_cluster_sizes))
+            conservative_min_samples = (
+                int(np.median([v for v in min_samples_candidates if v is not None]))
+                if min_samples_candidates and min_samples_candidates[0] is not None
+                else None
+            )
+            best_params = {
+                'min_cluster_size': conservative_min_size,
+                'min_samples': conservative_min_samples
+            }
+
+            clusterer = hdbscan_lib.HDBSCAN(
+                min_cluster_size=best_params['min_cluster_size'],
+                min_samples=best_params['min_samples'],
+                cluster_selection_method=cluster_selection_method,
+                metric=metric,
+                alpha=alpha
+            )
+            best_labels = clusterer.fit_predict(data)
+            best_n_clusters = len(set(best_labels)) - (1 if -1 in best_labels else 0)
     
     if verbose:
         print(f"Optimal parameters: {best_params}, clusters={best_n_clusters}")

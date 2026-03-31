@@ -110,6 +110,7 @@ from .clustering import (
     two_entry_dbscan,
     auto_hdbscan_clustering,
     cluster_by_foil_position,
+    suggest_adaptive_clustering_configs,
 )
 
 # ============================================================
@@ -216,6 +217,7 @@ __all__ = [
     'two_entry_dbscan',
     'auto_hdbscan_clustering',
     'cluster_by_foil_position',
+    'suggest_adaptive_clustering_configs',
     
     # Visualization
     'visualize_dbscan_results',
