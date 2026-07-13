@@ -83,6 +83,7 @@ from .data_io import (
     load_root_file,
     get_root_file_info,
     project_to_sieve,
+    nn_project_to_sieve,
     add_sieve_projection,
     filter_sieve_range,
     filter_branch_ranges,
@@ -136,6 +137,11 @@ from .calibration import (
     estimate_hole_positions,
     build_full_grid_index,
     get_row_statistics,
+    build_mechanical_grid_index,
+    build_candidate_mechanical_grid,
+    match_clusters_to_mechanical_grid,
+    infer_lattice_origin_cm,
+    mm_to_target_angle,
 )
 
 # ============================================================
@@ -163,6 +169,7 @@ from .config import (
     SoftWeightedDBSCANConfig,
     VisualizationConfig,
     GridIndexConfig,
+    MechanicalGridConfig,
     BenchmarkConfig,
     SeparabilityConfig,
     # Default instances
@@ -175,6 +182,7 @@ from .config import (
     DEFAULT_SOFT_WEIGHTED_DBSCAN_CONFIG,
     DEFAULT_VISUALIZATION_CONFIG,
     DEFAULT_GRID_INDEX_CONFIG,
+    DEFAULT_MECHANICAL_GRID_CONFIG,
     DEFAULT_BENCHMARK_CONFIG,
     DEFAULT_SEPARABILITY_CONFIG,
     # Constants
@@ -198,6 +206,7 @@ __all__ = [
     'load_root_file',
     'get_root_file_info',
     'project_to_sieve',
+    'nn_project_to_sieve',
     'add_sieve_projection',
     'filter_sieve_range',
     'filter_branch_ranges',
@@ -235,6 +244,11 @@ __all__ = [
     'estimate_hole_positions',
     'build_full_grid_index',
     'get_row_statistics',
+    'build_mechanical_grid_index',
+    'build_candidate_mechanical_grid',
+    'match_clusters_to_mechanical_grid',
+    'infer_lattice_origin_cm',
+    'mm_to_target_angle',
     
     # Evaluation
     'calculate_cluster_metrics',
@@ -253,6 +267,7 @@ __all__ = [
     'SoftWeightedDBSCANConfig',
     'VisualizationConfig',
     'GridIndexConfig',
+    'MechanicalGridConfig',
     'BenchmarkConfig',
     'SeparabilityConfig',
     
@@ -266,6 +281,7 @@ __all__ = [
     'DEFAULT_SOFT_WEIGHTED_DBSCAN_CONFIG',
     'DEFAULT_VISUALIZATION_CONFIG',
     'DEFAULT_GRID_INDEX_CONFIG',
+    'DEFAULT_MECHANICAL_GRID_CONFIG',
     'DEFAULT_BENCHMARK_CONFIG',
     'DEFAULT_SEPARABILITY_CONFIG',
     

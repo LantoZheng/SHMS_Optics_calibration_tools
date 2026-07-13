@@ -138,6 +138,60 @@ def get_root_file_info(file_path: str, tree_name: str = "T") -> dict:
     return info
 
 
+def _compute_sieve_components(
+    x: np.ndarray,
+    y: np.ndarray,
+    th: np.ndarray,
+    ph: np.ndarray,
+    dp: np.ndarray,
+    config: TargetProjectionConfig,
+) -> Tuple[np.ndarray, np.ndarray]:
+    """Core sieve projection formulas (shared by project_to_sieve and nn_project_to_sieve).
+
+    Full SHMS optics transformation:
+
+        sieve_x = x_tar + θ × z_coefficient
+
+        sieve_y = (c₁·δ + c₂·δ² + c₃·φ + y_tar)
+                + M × (c₄·δ + c₅·δ² + φ)
+
+    where the default coefficients are:
+
+        z_coefficient = 253.0           [cm]
+        c₁ = -0.019                     [cm/%]
+        c₂ = +0.00019                   [cm/%²]
+        c₃ = 213.0                      [cm/rad]   (138.0 + 75.0)
+        c₄ = -0.00052                   [1/%]
+        c₅ = +0.0000052                 [1/%²]
+        M  = 40.0                       [cm]
+
+    Parameters
+    ----------
+    x, y : np.ndarray
+        Target-plane coordinates (x_tar, y_tar) in cm.
+    th, ph : np.ndarray
+        In-plane and out-of-plane angles (θ, φ) in rad.
+    dp : np.ndarray
+        Momentum deviation δ in %.
+    config : TargetProjectionConfig
+        Projection coefficients.
+    """
+    sieve_x = x + th * config.x_z_coefficient
+
+    sieve_y = (
+        config.y_dp_linear * dp
+        + config.y_dp_quadratic * dp**2
+        + config.y_ph_coefficient * ph
+        + y
+    ) + config.y_offset_multiplier * (
+        config.y_offset_dp_linear * dp
+        + config.y_offset_dp_quadratic * dp**2
+        + ph
+    )
+
+    return sieve_x, sieve_y
+
+
 def project_to_sieve(
     df: pd.DataFrame,
     x_col: str = 'P_gtr_x',
@@ -148,40 +202,40 @@ def project_to_sieve(
     config: Optional[TargetProjectionConfig] = None
 ) -> Tuple[np.ndarray, np.ndarray]:
     """
-    Calculate sieve-plane projection from reconstructed variables.
-    
-    This function projects the reconstructed tracking variables to the
-    sieve plane using the SHMS optics transformation formulas.
-    
-    The projection formulas are:
-    
-    - Sieve_x = x + th * z_coefficient
-    - Sieve_y = (-0.019 * dp + 0.00019 * dp² + 213 * ph + y)
-                 + 40.0 * (-0.00052 * dp + 0.0000052 * dp² + ph)
-    
+    Calculate sieve-plane projection from HCANA-reconstructed variables.
+
+    Uses the **full** SHMS optics transformation formulas
+    (not the simplified θ×253 / φ×253 linear approximation).
+
+    Formulas
+    --------
+    sieve_x = x_tar + θ × 253                           [cm]
+    sieve_y = (-0.019·δ + 0.00019·δ² + 213·φ + y_tar)
+            + 40 × (-0.00052·δ + 0.0000052·δ² + φ)      [cm]
+
     Parameters
     ----------
     df : pd.DataFrame
         DataFrame containing the tracking variables.
     x_col : str, optional
-        Column name for x position. Default is 'P_gtr_x'.
+        Column name for target x (x_tar). Default 'P_gtr_x'.
     y_col : str, optional
-        Column name for y position. Default is 'P_gtr_y'.
+        Column name for target y (y_tar). Default 'P_gtr_y'.
     th_col : str, optional
-        Column name for in-plane angle θ. Default is 'P_gtr_th'.
+        Column name for in-plane angle θ. Default 'P_gtr_th'.
     ph_col : str, optional
-        Column name for out-of-plane angle φ. Default is 'P_gtr_ph'.
+        Column name for out-of-plane angle φ. Default 'P_gtr_ph'.
     dp_col : str, optional
-        Column name for momentum deviation δ. Default is 'P_gtr_dp'.
+        Column name for momentum deviation δ. Default 'P_gtr_dp'.
     config : TargetProjectionConfig, optional
         Configuration object containing projection coefficients.
         If None, uses default configuration.
-    
+
     Returns
     -------
     tuple of np.ndarray
         (sieve_x, sieve_y) arrays containing the projected coordinates.
-    
+
     Examples
     --------
     >>> df = load_root_file("data.root")
@@ -191,29 +245,89 @@ def project_to_sieve(
     """
     if config is None:
         config = DEFAULT_TARGET_PROJECTION_CONFIG
-    
+
     x = df[x_col].values
     y = df[y_col].values
     th = df[th_col].values
     ph = df[ph_col].values
     dp = df[dp_col].values
-    
-    # Sieve_x projection
-    sieve_x = x + th * config.x_z_coefficient
-    
-    # Sieve_y projection
-    sieve_y = (
-        config.y_dp_linear * dp + 
-        config.y_dp_quadratic * dp**2 + 
-        config.y_ph_coefficient * ph + 
-        y
-    ) + config.y_offset_multiplier * (
-        config.y_offset_dp_linear * dp + 
-        config.y_offset_dp_quadratic * dp**2 + 
-        ph
+
+    return _compute_sieve_components(x, y, th, ph, dp, config)
+
+
+def nn_project_to_sieve(
+    *,
+    nn_delta: np.ndarray,
+    nn_xptar: np.ndarray,
+    nn_yptar: np.ndarray,
+    x_tar: Optional[np.ndarray] = None,
+    y_tar: Optional[np.ndarray] = None,
+    config: Optional[TargetProjectionConfig] = None,
+) -> Tuple[np.ndarray, np.ndarray]:
+    """
+    Calculate sieve-plane projection from NN-predicted physics quantities.
+
+    This is the **inverse** direction: given NN outputs (delta, xptar≡θ,
+    yptar≡φ) and target-plane coordinates (x_tar, y_tar), project
+    **back** to the sieve plane using the **full** SHMS optics formulas.
+
+    This replaces the common but incorrect linear approximation:
+
+        nn_sieve_x ≈ nn_xptar × 253          ❌ (ignores x_tar)
+        nn_sieve_y ≈ nn_yptar × 253          ❌ (ignores δ corrections)
+
+    with the rigorous transformation:
+
+        nn_sieve_x = x_tar + nn_xptar × 253
+        nn_sieve_y = (-0.019·nn_delta + 0.00019·nn_delta² + 213·nn_yptar + y_tar)
+                   + 40 × (-0.00052·nn_delta + 0.0000052·nn_delta² + nn_yptar)
+
+    Parameters
+    ----------
+    nn_delta : np.ndarray
+        NN-predicted momentum deviation δ in %.
+    nn_xptar : np.ndarray
+        NN-predicted in-plane angle θ in rad.
+    nn_yptar : np.ndarray
+        NN-predicted out-of-plane angle φ in rad.
+    x_tar : np.ndarray, optional
+        Target-plane x coordinate in cm. If None, assumed zero
+        (beam-centred approximation; typical raster smearing is
+        ≪ θ×253 for realistic angles).
+    y_tar : np.ndarray, optional
+        Target-plane y coordinate in cm (P_gtr_y). If None, assumed
+        zero.  For foil-based data, passing the actual P_gtr_y is
+        recommended because y_tar contributes directly to sieve_y.
+    config : TargetProjectionConfig, optional
+        Projection coefficients. If None, uses default configuration.
+
+    Returns
+    -------
+    tuple of np.ndarray
+        (sieve_x, sieve_y) arrays in cm.
+
+    Notes
+    -----
+    This function is used in the NN relabeling pipeline
+    (``relabel_stage2_with_nn_sieve.py``) and in analysis scripts
+    that compare NN predictions against the mechanical hole grid.
+    """
+    if config is None:
+        config = DEFAULT_TARGET_PROJECTION_CONFIG
+
+    x = np.asarray(x_tar if x_tar is not None else 0.0, dtype=np.float64)
+    if x.ndim == 0:
+        x = np.full_like(nn_xptar, float(x), dtype=np.float64)
+
+    y = np.asarray(y_tar if y_tar is not None else 0.0, dtype=np.float64)
+    if y.ndim == 0:
+        y = np.full_like(nn_yptar, float(y), dtype=np.float64)
+
+    return _compute_sieve_components(
+        x, y,
+        nn_xptar, nn_yptar, nn_delta,
+        config,
     )
-    
-    return sieve_x, sieve_y
 
 
 def add_sieve_projection(

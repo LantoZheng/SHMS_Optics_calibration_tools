@@ -277,6 +277,66 @@ class GridIndexConfig:
 
 
 @dataclass
+class MechanicalGridConfig:
+    """Configuration for mechanical hole grid matching.
+
+    This configuration bridges the data-driven grid inference from
+    ``build_grid_index_from_centers`` with the physics-driven
+    mechanical hole matching from the NN training pipeline.
+
+    The grid spacing can be either auto-detected from cluster centres
+    (``auto_spacing=True``) or explicitly specified via ``x_spacing_mm``
+    and ``y_spacing_mm``.  When both are provided, the explicit values
+    take precedence.
+
+    Attributes:
+        x_spacing_mm: Sieve hole spacing along x in mm.
+            If None and ``auto_spacing`` is True, auto-detect from data.
+        y_spacing_mm: Sieve hole spacing along y in mm.
+            If None and ``auto_spacing`` is True, auto-detect from data.
+        tolerance_mm: Half-width tolerance in mm for hole assignment.
+            Used to compute ``weak_hole_xptar_tol`` / ``weak_hole_yptar_tol``.
+        sieve_distance_cm: Effective target-to-sieve distance in cm.
+            Used to convert mm spacing ↔ target-angle labels.
+        assignment_mode: Matching strategy.
+            ``"nearest"`` — independent nearest-neighbour matching.
+            ``"center_out_penalized"`` — inner clusters first,
+            occupied holes penalised to avoid conflicts.
+        occupancy_penalty_cm: Penalty in cm added to effective match
+            cost for each cluster already assigned to a hole
+            (only used in ``center_out_penalized`` mode).
+        hole_origin_xptar: Angular offset in rad applied to
+            auto-generated xptar hole centres.
+        hole_origin_yptar: Angular offset in rad applied to
+            auto-generated yptar hole centres.
+        auto_spacing: If True and spacing not explicitly given,
+            estimate spacing from nearest-neighbour distances.
+        cluster_col: Column name for cluster labels.
+        x_col: Column name for cluster centre x-coordinate (sieve cm).
+        y_col: Column name for cluster centre y-coordinate (sieve cm).
+    """
+    # Spacing
+    x_spacing_mm: Optional[float] = None
+    y_spacing_mm: Optional[float] = None
+    # Tolerance
+    tolerance_mm: float = 3.0
+    # Projection
+    sieve_distance_cm: float = 253.0
+    # Matching
+    assignment_mode: str = "center_out_penalized"
+    occupancy_penalty_cm: float = 0.35
+    # Grid origin
+    hole_origin_xptar: float = 0.0
+    hole_origin_yptar: float = 0.0
+    # Auto-detection
+    auto_spacing: bool = True
+    # Column names
+    cluster_col: str = 'cluster'
+    x_col: str = 'cluster_center_x'
+    y_col: str = 'cluster_center_y'
+
+
+@dataclass
 class BenchmarkConfig:
     """Configuration for benchmark evaluation.
     
@@ -332,6 +392,9 @@ DEFAULT_VISUALIZATION_CONFIG = VisualizationConfig()
 
 #: Default grid index configuration
 DEFAULT_GRID_INDEX_CONFIG = GridIndexConfig()
+
+#: Default mechanical grid matching configuration
+DEFAULT_MECHANICAL_GRID_CONFIG = MechanicalGridConfig()
 
 #: Default benchmark configuration
 DEFAULT_BENCHMARK_CONFIG = BenchmarkConfig()
