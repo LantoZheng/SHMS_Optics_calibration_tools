@@ -398,6 +398,33 @@ main_panel = html.Div(
                             ),
                             dcc.Store(id="store-explorer-filters", data=[]),
                         ]),
+                dcc.Tab(label="FP5D Coordinate Lab", value="tab-coordinate-lab",
+                        children=[
+                            html.Div([
+                                html.P(
+                                    "Build global robust-PCA FP5D coordinates and local Fisher/LDA z3 fields. "
+                                    "Local z3 is valid only within its neighbouring-cluster cell.",
+                                    style={"font-size": "12px", "color": "#555", "margin": "10px 0"},
+                                ),
+                                dbc.Button("Build / Refresh Coordinate Field", id="btn-build-coordinate-field",
+                                           color="primary", size="sm"),
+                                html.Span(id="coordinate-field-status", style={
+                                    "font-size": "12px", "margin-left": "12px", "color": "#555",
+                                }),
+                                html.Div([
+                                    dcc.Dropdown(id="coordinate-x-axis", clearable=False,
+                                                 style={"width": "220px", "font-size": "12px"}),
+                                    dcc.Dropdown(id="coordinate-y-axis", clearable=False,
+                                                 style={"width": "220px", "font-size": "12px", "margin-left": "8px"}),
+                                    dcc.Dropdown(id="coordinate-z-axis", clearable=False,
+                                                 style={"width": "220px", "font-size": "12px", "margin-left": "8px"}),
+                                    dcc.Dropdown(id="coordinate-color", clearable=False,
+                                                 style={"width": "220px", "font-size": "12px", "margin-left": "8px"}),
+                                ], style={"display": "flex", "margin": "12px 0", "flex-wrap": "wrap", "gap": "4px"}),
+                                dcc.Loading(id="loading-coordinate-graph", type="cube", color="#673AB7",
+                                            children=[dcc.Graph(id="graph-coordinate-3d", style={"height": "70vh"})]),
+                            ], style={"padding": "8px 16px"}),
+                        ]),
             ],
         ),
         # ── Status bar below graph ──
