@@ -1,4 +1,4 @@
-"""SOC Labeling GUI — interactive web dashboard for SHMS optics calibration.
+"""SHMS CalibrationTools — interactive dashboard for SHMS optics calibration.
 
 Launch with::
 

@@ -115,6 +115,20 @@ from .clustering import (
 )
 
 # ============================================================
+# FP5D clustering and coordinate fields
+# ============================================================
+from .fp5d import (
+    FP5DColumns,
+    FP5DResult,
+    FP5DClusterResult,
+    resolve_fp5d_columns,
+    build_fp5d_latent,
+    cluster_fp5d,
+    cluster_fp5d_research,
+    build_z_coordinate_field,
+)
+
+# ============================================================
 # Visualization Exports
 # ============================================================
 from .visualization import (
@@ -227,6 +241,16 @@ __all__ = [
     'auto_hdbscan_clustering',
     'cluster_by_foil_position',
     'suggest_adaptive_clustering_configs',
+
+    # FP5D clustering and coordinates
+    'FP5DColumns',
+    'FP5DResult',
+    'FP5DClusterResult',
+    'resolve_fp5d_columns',
+    'build_fp5d_latent',
+    'cluster_fp5d',
+    'cluster_fp5d_research',
+    'build_z_coordinate_field',
     
     # Visualization
     'visualize_dbscan_results',

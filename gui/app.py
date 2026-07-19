@@ -1,4 +1,4 @@
-"""SOC Labeling GUI — Dash application entry point.
+"""SHMS CalibrationTools — Dash application entry point.
 
 Usage
 -----
@@ -9,7 +9,7 @@ Usage
     python SHMS_Optics_calibration_tools/gui/app.py
 
 Opens a browser tab at http://127.0.0.1:8050 with the interactive
-SOC labeling dashboard.
+SHMS calibration dashboard.
 """
 
 from __future__ import annotations
@@ -22,7 +22,7 @@ from SHMS_Optics_calibration_tools.gui.layout import layout
 app = dash.Dash(
     __name__,
     external_stylesheets=[dbc.themes.FLATLY],
-    title="SOC Labeling GUI",
+    title="SHMS CalibrationTools",
     update_title=None,
     suppress_callback_exceptions=True,
 )

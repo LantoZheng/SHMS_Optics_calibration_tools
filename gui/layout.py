@@ -102,13 +102,56 @@ def make_input(id_: str, label: str, value, input_type: str = "number") -> html.
 # ── Sidebar ───────────────────────────────────────────────
 sidebar = html.Div(
     [
-        html.H4("SOC Labeling GUI", style={"text-align": "center", "margin-top": "8px"}),
+        html.H4("SHMS CalibrationTools", style={"text-align": "center", "margin-top": "8px"}),
         html.Hr(),
 
         # ── Data Loading ──
         html.Div("📂 Data Loading", style=SECTION_HEADER),
         make_input("input-root-file", "ROOT File Path", "", input_type="text"),
         make_input("input-tree-name", "Tree Name", "T", input_type="text"),
+        html.Label("Branch loading", style=LABEL_STYLE),
+        dcc.RadioItems(
+            id="radio-root-branch-mode",
+            options=[
+                {"label": " Optimized (recommended)", "value": "optimized"},
+                {"label": " Read all ROOT branches", "value": "all"},
+                {"label": " Manually select branches", "value": "manual"},
+            ],
+            value="optimized",
+            style={"font-size": "11px", "margin-bottom": "5px"},
+            inputStyle={"margin-right": "3px", "margin-left": "4px"},
+        ),
+        html.Div(
+            "Optimized reads only reconstruction, FP5D and PID branches; it is suitable for the normal GUI and FP5D workflow.",
+            style={"font-size": "10px", "color": "#666", "margin-bottom": "6px"},
+        ),
+        make_input(
+            "input-extra-root-branches",
+            "Extra branches (comma-separated, optional)",
+            "",
+            input_type="text",
+        ),
+        html.Div(
+            id="manual-root-branch-controls",
+            children=[
+                html.Div("Assign each GUI variable to a ROOT branch. Enter the ROOT path first; choices are then populated without reading event data.",
+                         style={"font-size": "10px", "color": "#666", "margin-bottom": "5px"}),
+                *[
+                    html.Div([
+                        html.Label(role, style={"font-size": "10px", "margin-bottom": "1px"}),
+                        dcc.Dropdown(id={"type": "manual-root-branch", "role": role}, options=[], value=None,
+                                     placeholder="Select ROOT branch", searchable=True, clearable=False,
+                                     style={"font-size": "10px"}),
+                    ], style={"margin-bottom": "4px"})
+                    for role in (
+                        "P_gtr_x", "P_gtr_y", "P_gtr_dp", "P_gtr_th", "P_gtr_ph", "P_react_z",
+                        "P_dc_x_fp", "P_dc_y_fp", "P_dc_xp_fp", "P_dc_yp_fp", "P_rb_raster_frybRawAdc",
+                        "P_ngcer_npeSum", "P_hgcer_npeSum", "P_cal_etottracknorm",
+                    )
+                ],
+            ],
+            style={"display": "none", "max-height": "360px", "overflow-y": "auto", "padding": "5px", "border": "1px solid #ddd", "border-radius": "4px", "margin-bottom": "8px"},
+        ),
         html.Div(
             [
                 dbc.Button("Load Data", id="btn-load-data", color="primary", size="sm", style={"width": "100%"}),
@@ -184,6 +227,7 @@ sidebar = html.Div(
         dbc.Button("Export Labels", id="btn-export", color="warning", size="sm", style={"width": "100%"}),
         html.Div(id="export-status", style={"font-size": "11px", "color": "#888", "margin-top": "4px"}),
         dcc.Download(id="download-csv"),
+
     ],
     style={
         "position": "fixed", "top": 0, "left": 0, "bottom": 0,
@@ -320,6 +364,7 @@ main_panel = html.Div(
                                             id="radio-explorer-mode",
                                             options=[
                                                 {"label": " 2D Heatmap", "value": "heatmap"},
+                                                {"label": " 3D Scatter", "value": "scatter3d"},
                                                 {"label": " 1D Line Histogram", "value": "linehist"},
                                             ],
                                             value="heatmap", inline=True,
@@ -336,6 +381,12 @@ main_panel = html.Div(
                                                                 "margin-left": "8px"}),
                                         ], id="div-explorer-xy-vars",
                                            style={"display": "flex", "margin": "6px 0"}),
+                                        html.Div([
+                                            dcc.Dropdown(id="explorer-z-var", options=[],
+                                                         placeholder="Z variable", clearable=False,
+                                                         style={"width": "180px", "font-size": "11px"}),
+                                        ], id="div-explorer-z-var",
+                                           style={"display": "none", "margin": "6px 0"}),
                                         # Endpoints (linehist)
                                         html.Div([
                                             html.Label("Var X", style={"font-size": "10px"}),
@@ -387,6 +438,11 @@ main_panel = html.Div(
                                                       style={"width": "60px", "font-size": "11px", "margin-right": "2px"}),
                                             dcc.Input(id="explorer-ymax", type="number", placeholder="max",
                                                       style={"width": "60px", "font-size": "11px", "margin-right": "8px"}),
+                                            html.Label("Z", style={"font-size": "10px", "margin-right": "2px"}),
+                                            dcc.Input(id="explorer-zmin", type="number", placeholder="min",
+                                                      style={"width": "60px", "font-size": "11px", "margin-right": "2px"}),
+                                            dcc.Input(id="explorer-zmax", type="number", placeholder="max",
+                                                      style={"width": "60px", "font-size": "11px", "margin-right": "8px"}),
                                             dbc.Button("Generate", id="btn-explorer-generate", color="primary", size="sm"),
                                         ], style={"margin": "8px 0", "display": "flex", "align-items": "center", "flex-wrap": "wrap"}),
                                     ], style={
@@ -397,6 +453,60 @@ main_panel = html.Div(
                                 ],
                             ),
                             dcc.Store(id="store-explorer-filters", data=[]),
+                        ]),
+                dcc.Tab(label="FP5D / Z-space Lab", value="tab-fp5d-lab",
+                        children=[
+                            html.Div([
+                                html.Div([
+                    dbc.Button("Show exact Z coordinates", id="btn-build-z-coordinates", color="secondary", size="sm"),
+                                    dbc.Button("Export shareable 3D HTML", id="btn-export-fp5d-html", color="outline-primary", size="sm", style={"margin-left": "8px"}),
+                                    html.Span(id="z-coordinate-status", style={"font-size": "12px", "margin-left": "12px", "color": "#555"}),
+                                ], style={"margin": "10px 0"}),
+                                html.Div("🧭 FP5D Flow Clustering", style={**SECTION_HEADER, "font-size": "15px"}),
+                                html.Div(
+                                    "Independent of the sieve-plane clustering. Uses x_fp, y_fp, x'_fp, y'_fp and raster.",
+                                    style={"font-size": "12px", "color": "#666", "margin-bottom": "8px"},
+                                ),
+                                html.Div([
+                                    html.Div([html.Label("min_cluster_size (validated: 60)", style=LABEL_STYLE), dcc.Slider(id="slider-fp5d-min-cluster-size", min=10, max=300, step=5, value=60, marks=None, tooltip={"placement": "bottom", "always_visible": True})], style={"width": "310px"}),
+                                    html.Div([html.Label("min_samples (validated: 10)", style=LABEL_STYLE), dcc.Slider(id="slider-fp5d-min-samples", min=1, max=100, step=1, value=10, marks=None, tooltip={"placement": "bottom", "always_visible": True})], style={"width": "310px"}),
+                                    dbc.Checkbox(id="checkbox-force-exact-rerun", label="Force full recompute (ignore validated cache)", value=False, style={"font-size": "12px", "margin-top": "16px"}),
+                                    dbc.Button("Run exact FP5D research pipeline (GPU)", id="btn-run-fp5d-flow", color="primary", size="sm", style={"margin-top": "12px"}),
+                                ], style={"display": "flex", "align-items": "start", "gap": "18px", "flex-wrap": "wrap", "margin": "6px 0"}),
+                                html.Div("Exact mode uses the validated study settings: 80 flow epochs; HDBSCAN (60, 10, eom).", style={"font-size": "11px", "color": "#666", "margin-bottom": "5px"}),
+                                dcc.Loading(id="loading-fp5d-research-pipeline", type="circle", color="#2196F3", fullscreen=True,
+                                    children=html.Div(id="fp5d-status", style={"font-size": "12px", "color": "#666", "margin-bottom": "8px"})),
+                                html.Div([
+                                    html.Div([html.Label("Show", style=LABEL_STYLE), dcc.Dropdown(
+                                        id="fp5d-show-objects", clearable=False, value="both",
+                                        options=[{"label": "Points + centroids", "value": "both"}, {"label": "Points only", "value": "points"}, {"label": "Centroids only", "value": "centroids"}],
+                                        style={"width": "180px", "font-size": "12px"})]),
+                                    html.Div([html.Label("X", style=LABEL_STYLE), dcc.Dropdown(id="fp5d-x-axis", clearable=False, style={"width": "185px", "font-size": "12px"})]),
+                                    html.Div([html.Label("Y", style=LABEL_STYLE), dcc.Dropdown(id="fp5d-y-axis", clearable=False, style={"width": "185px", "font-size": "12px"})]),
+                                    html.Div([html.Label("Z", style=LABEL_STYLE), dcc.Dropdown(id="fp5d-z-axis", clearable=False, style={"width": "185px", "font-size": "12px"})]),
+                                    html.Div([html.Label("Colour", style=LABEL_STYLE), dcc.Dropdown(id="fp5d-colour", clearable=False, style={"width": "185px", "font-size": "12px"})]),
+                                ], style={"display": "flex", "gap": "8px", "flex-wrap": "wrap", "margin": "10px 0"}),
+                                html.Div(id="fp5d-view-status", style={"font-size": "12px", "color": "#555", "margin-bottom": "4px"}),
+                                html.Div([
+                                    html.Span("Manual cluster → foil / grid match", style={"font-weight": "600", "font-size": "12px", "margin-right": "12px"}),
+                                    html.Span(id="fp5d-manual-selection", children="Click a centroid (or an event point) to select its FP5D cluster.", style={"font-size": "12px", "color": "#555", "margin-right": "12px"}),
+                                    html.Label("Foil", style=LABEL_STYLE),
+                                    dcc.Input(id="fp5d-match-foil", type="number", min=0, step=1, value=0, style={"width": "56px", "margin-right": "6px"}),
+                                    html.Label("Grid row", style=LABEL_STYLE),
+                                    dcc.Input(id="fp5d-match-row", type="number", step=1, value=0, style={"width": "56px", "margin-right": "6px"}),
+                                    html.Label("Grid col", style=LABEL_STYLE),
+                                    dcc.Input(id="fp5d-match-col", type="number", step=1, value=0, style={"width": "56px", "margin-right": "8px"}),
+                                    dbc.Button("Record match", id="btn-fp5d-record-match", color="primary", size="sm"),
+                                    dbc.Button("Mark as noise", id="btn-fp5d-mark-noise", color="secondary", size="sm"),
+                                ], style={"display": "flex", "align-items": "center", "gap": "5px", "flex-wrap": "wrap", "margin": "7px 0"}),
+                                html.Div(id="fp5d-manual-match-status", style={"font-size": "12px", "color": "#555", "margin-bottom": "4px"}),
+                                html.Div(id="fp5d-manual-match-table", style={"font-size": "12px", "margin-bottom": "6px"}),
+                                dcc.Loading(id="loading-fp5d-graph", type="cube", color="#673AB7", children=[
+                                    dcc.Graph(id="graph-fp5d-3d", style={"height": "70vh"}, config={"scrollZoom": True, "displaylogo": False}),
+                                ]),
+                                dcc.Download(id="download-fp5d-html"),
+                                dcc.Store(id="store-fp5d-manual-selection", data={}),
+                            ], style={"padding": "8px 16px"}),
                         ]),
             ],
         ),
@@ -484,4 +594,23 @@ edit_modal = dbc.Modal(
 edit_store = dcc.Store(id="store-edit-context", data={})  # {foil, cluster, row, col}
 
 # ── Full layout ───────────────────────────────────────────
-layout = html.Div([sidebar, main_panel, right_sidebar, edit_modal, edit_store])
+_RESEARCH_OVERLAY_HIDDEN = {"display": "none"}
+_RESEARCH_OVERLAY_ACTIVE = {
+    "display": "flex", "position": "fixed", "inset": "0", "zIndex": 10000,
+    "background": "rgba(15, 23, 42, 0.72)", "alignItems": "center", "justifyContent": "center",
+}
+
+research_overlay = html.Div(
+    id="fp5d-research-overlay",
+    style=_RESEARCH_OVERLAY_HIDDEN,
+    children=html.Div([
+        dbc.Spinner(color="light", size="lg"),
+        html.Div("Exact FP5D research pipeline is running", style={"fontWeight": "bold", "fontSize": "20px", "marginTop": "18px"}),
+        html.Div("Flow training → HDBSCAN → local coordinate fields → relative Z mapping → global flattened Z3",
+                 style={"fontSize": "13px", "marginTop": "8px", "textAlign": "center", "maxWidth": "620px"}),
+        html.Div("This full Run-25521 analysis can take several minutes; keep this page open.",
+                 style={"fontSize": "12px", "marginTop": "14px", "opacity": 0.8}),
+    ], style={"color": "white", "textAlign": "center", "padding": "36px", "borderRadius": "12px", "background": "#1e293b", "boxShadow": "0 18px 60px rgba(0,0,0,.45)"}),
+)
+
+layout = html.Div([sidebar, main_panel, right_sidebar, edit_modal, edit_store, research_overlay])

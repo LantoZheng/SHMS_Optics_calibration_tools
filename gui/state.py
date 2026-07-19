@@ -65,6 +65,17 @@ class SessionState:
     trace_point_lookup: dict[int, list[tuple[int, int, int]]] = field(default_factory=dict)
     grid_trace_lookup: dict[int, list[dict[str, Any]]] = field(default_factory=dict)
     current_foil_filter: str = "all"  # tracked so figure rebuilds respect foil choice
+    # FP5D workflow is deliberately independent from legacy sieve-plane labels.
+    fp5d_source_df: Optional[pd.DataFrame] = None
+    fp5d_df: Optional[pd.DataFrame] = None
+    fp5d_root_path: Optional[str] = None
+    fp5d_summary: dict[str, Any] = field(default_factory=dict)
+    z_coordinate_summary: dict[str, Any] = field(default_factory=dict)
+    # Explicit expert annotations for the independent FP5D clustering.  These
+    # deliberately live apart from ``manual_edits``: those edits refer to the
+    # legacy sieve-plane clustering, while these keys are FP5D cluster ids.
+    fp5d_manual_matches: dict[int, dict[str, int]] = field(default_factory=dict)
+    fp5d_selected_cluster: Optional[int] = None
 
     def push_undo(self, description: str, before: dict[str, Any]) -> None:
         """Record a snapshot before a mutation for undo support."""

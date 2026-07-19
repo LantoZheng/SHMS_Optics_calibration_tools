@@ -10,6 +10,8 @@ from __future__ import annotations
 import colorsys
 import json
 import os
+from pathlib import Path
+import runpy
 import sys
 from typing import Any, Optional
 
@@ -17,24 +19,127 @@ import dash_bootstrap_components as dbc
 import numpy as np
 import pandas as pd
 import plotly.graph_objects as go
+import plotly.io as pio
 import uproot
 from dash import Input, Output, State, callback, dcc, html, no_update, ALL, ctx
 from plotly import colors
 
-# Ensure repo root is on path so we can import soc and build_stage2_labels
-_REPO_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", ".."))
+# The package is a submodule: its parent is the workspace root containing the
+# archived FP5D study and the other calibration packages.
+_REPO_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
 if _REPO_ROOT not in sys.path:
     sys.path.insert(0, _REPO_ROOT)
 
 import SHMS_Optics_calibration_tools as soc
 from SHMS_Optics_calibration_tools.config import MechanicalGridConfig, HDBSCANConfig
+from SHMS_Optics_calibration_tools.fp5d import cluster_fp5d, cluster_fp5d_research, build_z_coordinate_field
 from SHMS_Optics_calibration_tools.gui.state import get_session
 
 # ── colour palette ────────────────────────────────────────
 _FOIL_COLORS = {0: "#2196F3", 1: "#FF9800", 2: "#4CAF50"}
 _PLOTLY_TEMPLATE = "plotly_white"
+_RESEARCH_OVERLAY_ACTIVE = {"display": "flex", "position": "fixed", "inset": "0", "zIndex": 10000,
+                            "background": "rgba(15, 23, 42, 0.72)", "alignItems": "center", "justifyContent": "center"}
+_RESEARCH_OVERLAY_HIDDEN = {"display": "none"}
+
+# Branches required for the normal sieve/foil GUI, PID controls and FP5D flow.
+# Production replay files can expand to tens of GB when every branch is read.
+_OPTIMIZED_ROOT_COLUMNS = (
+    "P_gtr_x", "P_gtr_y", "P_gtr_dp", "P_gtr_th", "P_gtr_ph", "P_react_z",
+    "P_dc_x_fp", "P_dc_y_fp", "P_dc_xp_fp", "P_dc_yp_fp", "P_rb_raster_frybRawAdc",
+    "P_ngcer_npeSum", "P_hgcer_npeSum", "P_cal_etottracknorm",
+)
 
 # ── helpers ───────────────────────────────────────────────
+
+
+def _root_column_name(name: str) -> str:
+    """Convert HCANA's dotted branch spelling into the GUI's canonical form."""
+    return str(name).replace(".", "_")
+
+
+def _resolve_root_branches(
+    tree, mode: str, extra_branches: str | None, manual_mapping: Optional[dict[str, str]] = None,
+) -> tuple[list[str], list[str], dict[str, str]]:
+    """Select physical ROOT branches and map them to canonical GUI columns."""
+    available = [str(name).split(";")[0] for name in tree.keys()]
+    by_canonical = {_root_column_name(name): name for name in available}
+    manual_mapping = manual_mapping or {}
+    if manual_mapping:
+        absent = [f"{role} → {branch}" for role, branch in manual_mapping.items() if branch not in available]
+        if absent:
+            raise KeyError("Selected ROOT branches unavailable: " + ", ".join(absent))
+        if len(set(manual_mapping.values())) != len(manual_mapping):
+            raise ValueError("One ROOT branch cannot be assigned to more than one logical GUI variable.")
+        requested = list(manual_mapping.values())
+        rename_map = {branch: role for role, branch in manual_mapping.items()}
+    else:
+        requested = list(available) if mode == "all" else list(_OPTIMIZED_ROOT_COLUMNS)
+        rename_map = {}
+    requested.extend(item.strip() for item in (extra_branches or "").replace("\n", ",").split(",") if item.strip())
+
+    selected: list[str] = []
+    missing_required: list[str] = []
+    missing_extra: list[str] = []
+    required = set(_OPTIMIZED_ROOT_COLUMNS) if (mode != "all" or manual_mapping) else set()
+    for requested_name in requested:
+        actual = requested_name if requested_name in available else by_canonical.get(_root_column_name(requested_name))
+        if actual is None:
+            (missing_required if _root_column_name(requested_name) in required else missing_extra).append(requested_name)
+            continue
+        if actual not in selected:
+            selected.append(actual)
+    if missing_required:
+        raise KeyError("Required branches unavailable: " + ", ".join(missing_required))
+    return selected, missing_extra, rename_map
+
+
+def _run_exact_run25521_pipeline(root_file: str, force_recompute: bool = False) -> tuple[pd.DataFrame, dict[str, Any]]:
+    """Run the archived study scripts in their original order and load its final chart.
+
+    This deliberately uses the same code path as the earlier figures, rather
+    than an approximate GUI reimplementation.  Its fixed experimental design
+    is Run 25521, whose unskimmed ROOT file is the selected GUI reference.
+    """
+    study = Path(_REPO_ROOT) / "SHMS_Calibration_NN" / "experiments" / "raw_fullroot_fp5d"
+    expected = Path(root_file).expanduser().resolve()
+    if expected.name.lower() != "shms_coin_replay_production_25521_-1.root":
+        raise ValueError("The exact archived pipeline is calibrated to unskimmed Run 25521. Select shms_coin_replay_production_25521_-1.root first.")
+    if not expected.is_file():
+        raise FileNotFoundError(f"Selected Run-25521 ROOT file does not exist: {expected}")
+    scripts = (
+        "run_full_linear_local_field_pipeline.py",
+        "relative_z_lattice_mapping.py",
+        "nonlinear_canonical_z_remapping.py",
+        "render_nearest_foil_completed_sieve.py",
+        "build_global_continuous_z3.py",
+        "flatten_global_z3_foil_layers.py",
+    )
+    output = study / "results" / "global_foil_flattened_z3_labels.csv"
+    # This study has a fixed ROOT input and fixed validated parameters.  Reuse
+    # its final artifact when it is newer than both the raw ROOT file and all
+    # pipeline scripts; this preserves bit-for-bit prior results while turning
+    # routine GUI inspection from minutes into seconds.
+    newest_input = max([expected.stat().st_mtime_ns, *[(study / name).stat().st_mtime_ns for name in scripts]])
+    cache_hit = output.exists() and output.stat().st_mtime_ns >= newest_input and not force_recompute
+    if not cache_hit:
+        previous_root = os.environ.get("SHMS_RUN25521_ROOT")
+        os.environ["SHMS_RUN25521_ROOT"] = str(expected)
+        try:
+            for name in scripts:
+                runpy.run_path(str(study / name), run_name="__main__")
+        finally:
+            if previous_root is None:
+                os.environ.pop("SHMS_RUN25521_ROOT", None)
+            else:
+                os.environ["SHMS_RUN25521_ROOT"] = previous_root
+    table = pd.read_csv(output).rename(columns=_root_column_name)
+    # The viewer's default cluster column follows the conservative local-field
+    # assignment, exactly as in the final research figures.
+    table["flow_hdbscan_cluster"] = table["linear_local_field_cluster"]
+    summary = json.loads((study / "results" / "global_foil_flattened_z3_summary.json").read_text(encoding="utf-8"))
+    summary.update({"method": "exact archived Run-25521 research pipeline", "scripts": list(scripts), "cache_hit": cache_hit})
+    return table, summary
 
 
 def _project_to_sieve(df: pd.DataFrame) -> pd.DataFrame:
@@ -42,6 +147,38 @@ def _project_to_sieve(df: pd.DataFrame) -> pd.DataFrame:
     if "sieve_x" in df.columns and "sieve_y" in df.columns:
         return df
     return soc.add_sieve_projection(df)
+
+
+@callback(
+    Output("manual-root-branch-controls", "style"),
+    Input("radio-root-branch-mode", "value"),
+)
+def toggle_manual_root_branches(mode: str) -> dict[str, Any]:
+    return ({"display": "block", "max-height": "360px", "overflow-y": "auto", "padding": "5px", "border": "1px solid #ddd", "border-radius": "4px", "margin-bottom": "8px"}
+            if mode == "manual" else {"display": "none"})
+
+
+@callback(
+    Output({"type": "manual-root-branch", "role": ALL}, "options"),
+    Output({"type": "manual-root-branch", "role": ALL}, "value"),
+    Input("input-root-file", "value"),
+    Input("input-tree-name", "value"),
+)
+def inspect_root_branch_choices(root_file: str, tree_name: str):
+    """Populate manual mapping selectors from metadata only, never event arrays."""
+    empty = [[] for _ in _OPTIMIZED_ROOT_COLUMNS]
+    empty_values = [None for _ in _OPTIMIZED_ROOT_COLUMNS]
+    if not root_file or not os.path.isfile(root_file):
+        return empty, empty_values
+    try:
+        tree = uproot.open(root_file)[tree_name or "T"]
+        names = [str(name).split(";")[0] for name in tree.keys()]
+        options = [{"label": name, "value": name} for name in names]
+        canonical = {_root_column_name(name): name for name in names}
+        defaults = [canonical.get(role) for role in _OPTIMIZED_ROOT_COLUMNS]
+        return [options for _ in _OPTIMIZED_ROOT_COLUMNS], defaults
+    except Exception:
+        return empty, empty_values
 
 
 def _classify_foils(df: pd.DataFrame) -> pd.DataFrame:
@@ -60,6 +197,270 @@ def _build_empty_figure(message: str = "Load data to begin") -> go.Figure:
     )
     fig.update_layout(template=_PLOTLY_TEMPLATE, margin={"l": 40, "r": 20, "t": 40, "b": 40})
     return fig
+
+
+def _fp5d_options(df: pd.DataFrame) -> tuple[list[dict[str, str]], list[dict[str, str]]]:
+    """Return compact axis and categorical colour selectors for the FP5D lab."""
+    numeric = [c for c in df if pd.api.types.is_numeric_dtype(df[c])]
+    preferred = [c for c in numeric if c.startswith(("flow_z", "fp5d_", "z3_", "global_"))]
+    preferred += [c for c in ("sieve_x", "sieve_y", "P_gtr_y", "foil_position", "flow_hdbscan_cluster") if c in numeric and c not in preferred]
+    axes = preferred or numeric
+    colour = [c for c in ("linear_local_field_cluster", "flow_hdbscan_cluster", "final_relative_foil", "canonical_foil_layer", "foil_position", "canonical_hole_family", "local_component") if c in df]
+    colour += [c for c in axes if c not in colour]
+    return ([{"label": c, "value": c} for c in axes], [{"label": c, "value": c} for c in colour])
+
+
+def _stable_colour(label: object) -> str:
+    if str(label) in {"-1", "nan", "None"}:
+        return "#9aa3ad"
+    hue = (hash(str(label)) & 0xFFFFFFFF) % 360
+    return f"hsl({hue}, 63%, 47%)"
+
+
+def _build_fp5d_3d_figure(df: pd.DataFrame, x_col: str, y_col: str, z_col: str,
+                           colour_col: str, objects: str) -> tuple[go.Figure, str]:
+    """Interactive FP5D viewer: translucent events plus opaque cluster centres."""
+    required = [x_col, y_col, z_col]
+    if any(not c or c not in df for c in required):
+        return _build_empty_figure("Run FP5D Flow + HDBSCAN first"), ""
+    plot = df.dropna(subset=required).copy()
+    if plot.empty:
+        return _build_empty_figure("No finite events in this coordinate view"), ""
+    cluster_col = "flow_hdbscan_cluster"
+    session = get_session()
+    manual_matches = session.fp5d_manual_matches
+    selected_cluster = session.fp5d_selected_cluster
+    if len(plot) > 45_000:
+        if cluster_col in plot:
+            plot = plot.groupby(cluster_col, group_keys=False).apply(
+                lambda g: g.sample(min(len(g), max(15, 45_000 // max(1, plot[cluster_col].nunique()))), random_state=42)
+            )
+            # pandas 3.x may exclude the grouping column from GroupBy.apply
+            # output. Restore it by event index so centroid construction is
+            # independent of the installed pandas version.
+            if cluster_col not in plot:
+                plot[cluster_col] = df.reindex(plot.index)[cluster_col].to_numpy()
+        else:
+            plot = plot.sample(45_000, random_state=42)
+    category = plot[colour_col].fillna(-1).astype(str) if colour_col in plot else pd.Series("events", index=plot.index)
+    fig = go.Figure()
+    if objects != "centroids":
+        for label in sorted(category.unique(), key=str):
+            part = plot.loc[category == label]
+            fig.add_trace(go.Scatter3d(
+                x=part[x_col], y=part[y_col], z=part[z_col], mode="markers", name=f"{colour_col}: {label}",
+                marker={"size": 1.35, "opacity": .24, "color": _stable_colour(label)},
+                customdata=part[[c for c in (cluster_col, "foil_position", "sieve_x", "sieve_y", "P_gtr_y") if c in part]].to_numpy(),
+                hovertemplate="%{x:.4g}, %{y:.4g}, %{z:.4g}<extra></extra>", showlegend=category.nunique() <= 18,
+            ))
+    n_centroids = 0
+    if objects != "points" and cluster_col in plot:
+        centers = plot.loc[plot[cluster_col] >= 0].groupby(cluster_col).agg(
+            **{x_col: (x_col, "mean"), y_col: (y_col, "mean"), z_col: (z_col, "mean"), "events_displayed": (cluster_col, "size")},
+        )
+        full_counts = df.loc[df[cluster_col] >= 0, cluster_col].value_counts()
+        centers["events_full"] = centers.index.to_series().map(full_counts).fillna(centers["events_displayed"]).to_numpy()
+        if colour_col in plot:
+            modes = plot.loc[plot[cluster_col] >= 0].groupby(cluster_col)[colour_col].agg(lambda s: s.dropna().mode().iloc[0] if not s.dropna().empty else -1)
+            centers["colour"] = centers.index.map(modes).fillna(-1).astype(str)
+        else:
+            centers["colour"] = centers.index.astype(str)
+        max_n = max(1, centers["events_full"].max())
+        for label, part in centers.groupby("colour"):
+            sizes = 3.0 + 7.0 * np.cbrt(part["events_full"].to_numpy() / max_n)
+            fig.add_trace(go.Scatter3d(
+                x=part[x_col], y=part[y_col], z=part[z_col], mode="markers", name=f"centroids: {label}",
+                marker={"size": sizes, "opacity": 1.0, "color": _stable_colour(label), "line": {"color": "#172033", "width": .8}},
+                customdata=[[int(idx)] for idx in part.index],
+                text=[
+                    f"cluster {idx}<br>N (full) = {int(row.events_full):,}<br>N (shown) = {int(row.events_displayed):,}"
+                    + ("<br>Manual: noise" if manual_matches.get(int(idx), {}).get("noise") else
+                       f"<br>Manual: foil {manual_matches[int(idx)]['foil']}, grid ({manual_matches[int(idx)]['row']}, {manual_matches[int(idx)]['col']})" if int(idx) in manual_matches else "")
+                    for idx, row in part.iterrows()
+                ],
+                hovertemplate="%{text}<extra></extra>", showlegend=False,
+            ))
+        if selected_cluster is not None and selected_cluster in centers.index:
+            selected = centers.loc[selected_cluster]
+            fig.add_trace(go.Scatter3d(
+                x=[selected[x_col]], y=[selected[y_col]], z=[selected[z_col]], mode="markers",
+                name=f"selected cluster {selected_cluster}",
+                marker={"size": 14, "symbol": "circle-open", "color": "#d62728", "line": {"color": "#d62728", "width": 3}},
+                customdata=[[int(selected_cluster)]],
+                hovertemplate=f"selected cluster {selected_cluster}<extra></extra>", showlegend=True,
+            ))
+        # Legend-only reference markers give a portable, dynamic size scale.
+        for n in sorted(set([int(centers.events_full.min()), int(centers.events_full.median()), int(centers.events_full.max())])):
+            fig.add_trace(go.Scatter3d(x=[None], y=[None], z=[None], mode="markers", name=f"centroid scale: N={n:,}",
+                                       marker={"size": 3.0 + 7.0 * (n / max_n) ** (1 / 3), "color": "#64748b"}, showlegend=True))
+        n_centroids = len(centers)
+    fig.update_layout(template=_PLOTLY_TEMPLATE, title="FP5D latent-space clustering",
+                      scene={"xaxis_title": x_col, "yaxis_title": y_col, "zaxis_title": z_col, "aspectmode": "data"},
+                      margin={"l": 0, "r": 0, "t": 45, "b": 0}, legend={"itemsizing": "constant"}, uirevision="fp5d-z-space")
+    return fig, f"{len(plot):,} displayed events; {n_centroids} opaque centroids; diameter ∝ N^(1/3), so visual volume ∝ N."
+
+
+@callback(
+    Output("fp5d-status", "children"), Output("z-coordinate-status", "children"),
+    Output("graph-fp5d-3d", "figure"), Output("fp5d-view-status", "children"),
+    Output("fp5d-x-axis", "options"), Output("fp5d-y-axis", "options"), Output("fp5d-z-axis", "options"), Output("fp5d-colour", "options"),
+    Output("fp5d-x-axis", "value"), Output("fp5d-y-axis", "value"), Output("fp5d-z-axis", "value"), Output("fp5d-colour", "value"),
+    Input("btn-run-fp5d-flow", "n_clicks"), Input("btn-build-z-coordinates", "n_clicks"),
+    Input("fp5d-show-objects", "value"), Input("fp5d-x-axis", "value"), Input("fp5d-y-axis", "value"), Input("fp5d-z-axis", "value"), Input("fp5d-colour", "value"),
+    State("slider-fp5d-min-cluster-size", "value"), State("slider-fp5d-min-samples", "value"), State("checkbox-force-exact-rerun", "value"),
+    prevent_initial_call=True,
+    running=[
+        (Output("btn-run-fp5d-flow", "disabled"), True, False),
+        (Output("fp5d-research-overlay", "style"), _RESEARCH_OVERLAY_ACTIVE, _RESEARCH_OVERLAY_HIDDEN),
+    ],
+)
+def on_fp5d_lab_change(run_clicks, z_clicks, objects, x_col, y_col, z_col, colour_col, min_cluster_size, min_samples, force_exact_rerun):
+    """Run the independent FP5D pipeline, construct Z fields, or redraw the viewer."""
+    session = get_session()
+    trigger = ctx.triggered_id
+    fp_status = no_update
+    z_status = no_update
+    try:
+        if trigger == "btn-run-fp5d-flow":
+            source = session.fp5d_source_df if session.fp5d_source_df is not None else session.raw_df
+            if source is None or source.empty:
+                return "⚠️ Load data first.", no_update, _build_empty_figure("Load data first"), "", [], [], [], [], None, None, None, None
+            if not session.fp5d_root_path:
+                raise ValueError("Reload the ROOT file before running the exact research pipeline.")
+            session.fp5d_df, session.fp5d_summary = _run_exact_run25521_pipeline(session.fp5d_root_path, bool(force_exact_rerun))
+            # Cluster ids are an output of the run, so annotations cannot be
+            # silently carried across a potentially different clustering.
+            session.fp5d_manual_matches.clear()
+            session.fp5d_selected_cluster = None
+            session.z_coordinate_summary = session.fp5d_summary
+            cache_text = "validated cache reused" if session.fp5d_summary.get("cache_hit") else "full recomputation complete"
+            fp_status = ("✅ Exact Run-25521 research pipeline complete (" + cache_text + "): continuous-prior flow, local fields, "
+                         "relative Z mapping, canonical remapping, global Z3 and foil flattening.")
+            x_col, y_col, z_col, colour_col = "flow_z1", "flow_z2", "global_foil_flattened_z3", "final_relative_foil"
+        elif trigger == "btn-build-z-coordinates":
+            if session.fp5d_df is None:
+                return no_update, "⚠️ Run FP5D Flow + HDBSCAN first.", _build_empty_figure("Run FP5D Flow + HDBSCAN first"), "", [], [], [], [], None, None, None, None
+            if "global_foil_flattened_z3" not in session.fp5d_df:
+                return no_update, "⚠️ The exact Z pipeline is run together with the research flow button.", no_update, no_update, no_update, no_update, no_update, no_update, no_update, no_update, no_update, no_update
+            z_status = "✅ Exact global continuous and foil-flattened Z3 coordinates are already available."
+            z_col = "global_foil_flattened_z3"
+
+        if session.fp5d_df is None:
+            return no_update, no_update, _build_empty_figure("Run FP5D Flow + HDBSCAN first"), "", [], [], [], [], None, None, None, None
+        df = session.fp5d_df
+        axis_options, colour_options = _fp5d_options(df)
+        allowed_axes = {item["value"] for item in axis_options}
+        allowed_colours = {item["value"] for item in colour_options}
+        x_col = x_col if x_col in allowed_axes else "flow_z1"
+        y_col = y_col if y_col in allowed_axes else "flow_z2"
+        z_col = z_col if z_col in allowed_axes else "flow_z3"
+        colour_col = colour_col if colour_col in allowed_colours else "flow_hdbscan_cluster"
+        figure, view_status = _build_fp5d_3d_figure(df, x_col, y_col, z_col, colour_col, objects or "both")
+        return fp_status, z_status, figure, view_status, axis_options, axis_options, axis_options, colour_options, x_col, y_col, z_col, colour_col
+    except Exception as exc:
+        message = f"❌ FP5D workflow error: {exc}"
+        return message, no_update, no_update, no_update, no_update, no_update, no_update, no_update, no_update, no_update, no_update, no_update
+
+
+@callback(
+    Output("download-fp5d-html", "data"),
+    Input("btn-export-fp5d-html", "n_clicks"),
+    State("fp5d-show-objects", "value"), State("fp5d-x-axis", "value"), State("fp5d-y-axis", "value"),
+    State("fp5d-z-axis", "value"), State("fp5d-colour", "value"),
+    prevent_initial_call=True,
+)
+def export_fp5d_html(n_clicks, objects, x_col, y_col, z_col, colour_col):
+    """Download the same rotatable 3D figure as a self-contained advisor-ready HTML."""
+    session = get_session()
+    if session.fp5d_df is None:
+        return no_update
+    fig, _ = _build_fp5d_3d_figure(session.fp5d_df, x_col, y_col, z_col, colour_col, objects or "both")
+    html_text = pio.to_html(fig, full_html=True, include_plotlyjs=True, config={"scrollZoom": True, "displaylogo": False})
+    return dcc.send_string(html_text, "fp5d-flow-cluster-explorer.html")
+
+
+def _fp5d_manual_match_table() -> html.Div:
+    """Compact, inspectable record of expert assignments in the FP5D lab."""
+    matches = get_session().fp5d_manual_matches
+    if not matches:
+        return html.Span("No manual FP5D assignments recorded.", style={"color": "#777"})
+    rows = [
+        html.Tr([html.Td(f"C{cluster}"), html.Td("noise" if item.get("noise") else f"foil {item['foil']}"), html.Td("—" if item.get("noise") else f"({item['row']}, {item['col']})")])
+        for cluster, item in sorted(matches.items())
+    ]
+    return html.Div([
+        html.Span(f"Recorded {len(rows)} manual assignment(s): ", style={"font-weight": "600"}),
+        html.Table([html.Thead(html.Tr([html.Th("Cluster"), html.Th("Foil"), html.Th("Grid (row, col)")])), html.Tbody(rows)],
+                   style={"display": "inline-table", "margin-left": "8px", "vertical-align": "middle", "border-collapse": "collapse"}),
+    ])
+
+
+@callback(
+    Output("store-fp5d-manual-selection", "data"),
+    Output("fp5d-manual-selection", "children"),
+    Output("fp5d-manual-match-status", "children"),
+    Output("fp5d-manual-match-table", "children"),
+    Output("graph-fp5d-3d", "figure", allow_duplicate=True),
+    Input("graph-fp5d-3d", "clickData"),
+    Input("btn-fp5d-record-match", "n_clicks"),
+    Input("btn-fp5d-mark-noise", "n_clicks"),
+    State("store-fp5d-manual-selection", "data"),
+    State("fp5d-show-objects", "value"), State("fp5d-x-axis", "value"), State("fp5d-y-axis", "value"),
+    State("fp5d-z-axis", "value"), State("fp5d-colour", "value"),
+    State("fp5d-match-foil", "value"), State("fp5d-match-row", "value"), State("fp5d-match-col", "value"),
+    prevent_initial_call=True,
+)
+def on_fp5d_manual_match(click_data, record_clicks, noise_clicks, selection, objects, x_col, y_col, z_col, colour_col, foil, row, col):
+    """Select an FP5D cluster in 3D and explicitly bind it to foil/grid indices."""
+    session = get_session()
+    if session.fp5d_df is None:
+        return {}, "Run FP5D Flow + HDBSCAN first.", "", _fp5d_manual_match_table(), no_update
+
+    selection = selection or {}
+    triggered = ctx.triggered_id
+    status = ""
+    if triggered == "graph-fp5d-3d":
+        point = (click_data or {}).get("points", [{}])[0]
+        custom = point.get("customdata")
+        try:
+            cluster = int(custom[0] if isinstance(custom, (list, tuple)) else custom)
+        except (TypeError, ValueError, IndexError):
+            return selection, "Click a centroid (or an event point) to select its FP5D cluster.", "⚠️ This mark has no cluster id.", _fp5d_manual_match_table(), no_update
+        if cluster < 0:
+            return selection, "Noise events cannot be assigned to a grid hole.", "⚠️ Select a non-noise cluster.", _fp5d_manual_match_table(), no_update
+        subset = session.fp5d_df[session.fp5d_df["flow_hdbscan_cluster"] == cluster]
+        if subset.empty:
+            return selection, "Cluster not found.", "⚠️ Selected cluster is absent from the active result.", _fp5d_manual_match_table(), no_update
+        inferred = subset["final_relative_foil"].dropna().mode()
+        inferred_text = f"; inferred foil {int(inferred.iloc[0])}" if not inferred.empty else ""
+        selection = {"cluster": cluster}
+        session.fp5d_selected_cluster = cluster
+        status = f"Selected C{cluster}: {len(subset):,} events{inferred_text}. Choose foil and grid indices, then record."
+    elif triggered == "btn-fp5d-mark-noise":
+        cluster = selection.get("cluster")
+        if cluster is None:
+            status = "⚠️ Select a cluster in the 3D view first."
+        else:
+            cluster = int(cluster)
+            session.fp5d_selected_cluster = cluster
+            session.fp5d_manual_matches[cluster] = {"noise": True}
+            status = f"✅ Marked C{cluster} as manual noise."
+    elif triggered == "btn-fp5d-record-match":
+        cluster = selection.get("cluster")
+        if cluster is None:
+            status = "⚠️ Select a cluster in the 3D view first."
+        elif any(value is None for value in (foil, row, col)):
+            status = "⚠️ Foil, grid row, and grid column are all required."
+        else:
+            cluster = int(cluster)
+            session.fp5d_selected_cluster = cluster
+            session.fp5d_manual_matches[cluster] = {"foil": int(foil), "row": int(row), "col": int(col)}
+            status = f"✅ Recorded C{cluster} → foil {int(foil)}, grid ({int(row)}, {int(col)})."
+
+    figure, _ = _build_fp5d_3d_figure(session.fp5d_df, x_col, y_col, z_col, colour_col, objects or "both")
+    selected_text = (f"Selected FP5D cluster C{session.fp5d_selected_cluster}." if session.fp5d_selected_cluster is not None
+                     else "Click a centroid (or an event point) to select its FP5D cluster.")
+    return selection, selected_text, status, _fp5d_manual_match_table(), figure
 
 
 def _filtered_results_for_display(foil_filter: Optional[str] = None):
@@ -248,10 +649,21 @@ def _init_single_cluster_per_foil(session) -> dict[int, dict[str, Any]]:
     Input("btn-load-data", "n_clicks"),
     State("input-root-file", "value"),
     State("input-tree-name", "value"),
+    State("radio-root-branch-mode", "value"),
+    State("input-extra-root-branches", "value"),
+    State({"type": "manual-root-branch", "role": ALL}, "value"),
     State("checkbox-manual-only", "value"),
     prevent_initial_call=True,
 )
-def on_load_data(n_clicks: int, root_file: str, tree_name: str, manual_only: bool):
+def on_load_data(
+    n_clicks: int,
+    root_file: str,
+    tree_name: str,
+    branch_mode: str,
+    extra_branches: str | None,
+    manual_branch_values: list[Optional[str]],
+    manual_only: bool,
+):
     if not root_file:
         return "❌ Please enter a ROOT file path.", _build_empty_figure(), no_update
 
@@ -263,8 +675,16 @@ def on_load_data(n_clicks: int, root_file: str, tree_name: str, manual_only: boo
         f = uproot.open(root_file)
         tree = f[tree_name]
 
-        # Read all branches
-        df = tree.arrays(library="pd")
+        mapping = {}
+        if branch_mode == "manual":
+            if len(manual_branch_values) != len(_OPTIMIZED_ROOT_COLUMNS) or any(value is None for value in manual_branch_values):
+                raise ValueError("Manually select one ROOT branch for every required GUI variable.")
+            mapping = dict(zip(_OPTIMIZED_ROOT_COLUMNS, manual_branch_values))
+        selected_branches, missing_extra, rename_map = _resolve_root_branches(tree, branch_mode, extra_branches, mapping)
+        # Read the compact analysis schema by default.  Columns are normalised
+        # immediately so the legacy GUI and dotted HCANA ROOT files interoperate.
+        df = tree.arrays(expressions=selected_branches, library="pd")
+        df = df.rename(columns=lambda name: rename_map.get(str(name), _root_column_name(name)))
         df = df.reset_index(drop=True)
 
         # Standard filter + project
@@ -274,6 +694,16 @@ def on_load_data(n_clicks: int, root_file: str, tree_name: str, manual_only: boo
              "P_gtr_ph": (-0.06, 0.06), "P_react_z": (-120.0, 120.0)},
             verbose=False,
         )
+        # Preserve the technical/kinematic sample before reconstructed-sieve
+        # windows or foil classification.  FP5D flow clustering must not inherit
+        # a hard sieve/foil cut from the legacy labeling workflow.
+        session.fp5d_source_df = _project_to_sieve(df.copy())
+        session.fp5d_root_path = os.path.abspath(root_file)
+        session.fp5d_df = None
+        session.fp5d_summary = {}
+        session.z_coordinate_summary = {}
+        session.fp5d_manual_matches.clear()
+        session.fp5d_selected_cluster = None
         df = _project_to_sieve(df)
         df = soc.filter_sieve_range(df, x_range=(-20, 20), y_range=(-20, 20), verbose=False)
 
@@ -294,8 +724,12 @@ def on_load_data(n_clicks: int, root_file: str, tree_name: str, manual_only: boo
             session.clustered_results = None
             fig = _build_sieve_scatter(df, title="Sieve Plane — All Events (colored by foil)")
 
+        load_mode = "manual mapping" if mapping else branch_mode
+        load_note = f"; {len(selected_branches)} branches ({load_mode})"
+        if missing_extra:
+            load_note += "; missing custom: " + ", ".join(missing_extra)
         return (
-            f"✅ Loaded {len(df):,} events, {len(session.foil_positions)} foils: {session.foil_positions}",
+            f"✅ Loaded {len(df):,} events, {len(session.foil_positions)} foils: {session.foil_positions}{load_note}",
             fig,
             cluster_status,
         )
@@ -338,6 +772,13 @@ def on_apply_filters(n_clicks, ngcer_min, hgcer_min, cal_min, cal_max, manual_on
     # Re-classify foils after filtering
     df = _classify_foils(df)
     session.raw_df = df
+    # Filter controls are applied to both paths after data have been loaded.
+    session.fp5d_source_df = df.copy()
+    session.fp5d_df = None
+    session.fp5d_summary = {}
+    session.z_coordinate_summary = {}
+    session.fp5d_manual_matches.clear()
+    session.fp5d_selected_cluster = None
     session.foil_positions = sorted(int(v) for v in df["foil_position"].dropna().unique() if v != -1)
 
     # ── Manual-only: re-init single cluster per foil ──
@@ -956,8 +1397,11 @@ def on_export(n_clicks, output_csv):
         return "❌ Run clustering + grid match first.", no_update
 
     try:
-        from training.scripts.build_stage2_labels_from_25521_fullroot import (
-            build_event_level_labels, compute_equal_hole_total_weights,
+        # The stage-2 helpers live in the archived calibration package.  The
+        # GUI is launched from the workspace root, so ``training`` is not a
+        # top-level package here.
+        from SHMS_Calibration_NN.training.scripts.build_stage2_labels_from_25521_fullroot import (
+            compute_equal_hole_total_weights,
         )
 
         hole_design = session.hole_design
@@ -2272,6 +2716,7 @@ def _apply_explorer_filter(df: pd.DataFrame, filters: list[dict]) -> pd.DataFram
 @callback(
     Output("explorer-x-var", "options"),
     Output("explorer-y-var", "options"),
+    Output("explorer-z-var", "options"),
     Output("explorer-line-varx", "options"),
     Output("explorer-line-vary", "options"),
     Output("explorer-cluster-filter", "options"),
@@ -2280,7 +2725,7 @@ def _apply_explorer_filter(df: pd.DataFrame, filters: list[dict]) -> pd.DataFram
 )
 def populate_explorer_dropdowns(tab):
     if tab != "tab-explorer":
-        return no_update, no_update, no_update, no_update, no_update
+        return no_update, no_update, no_update, no_update, no_update, no_update
     nums = _numeric_columns()
     var_opts = [{"label": c, "value": c} for c in nums]
 
@@ -2292,20 +2737,23 @@ def populate_explorer_dropdowns(tab):
                 df_f = session.clustered_results[fp]["df"]
                 for cid in sorted(c for c in df_f["cluster"].unique() if c >= 0):
                     cluster_opts.append({"label": f"F{fp} C{cid}", "value": f"{fp}:{cid}"})
-    return var_opts, var_opts, var_opts, var_opts, cluster_opts
+    return var_opts, var_opts, var_opts, var_opts, var_opts, cluster_opts
 
 
 # ── Mode toggle ↔ show/hide controls ──────────────────────
 
 @callback(
     Output("div-explorer-xy-vars", "style"),
+    Output("div-explorer-z-var", "style"),
     Output("div-explorer-line-endpoints", "style"),
     Input("radio-explorer-mode", "value"),
 )
 def toggle_explorer_mode(mode):
     if mode == "heatmap":
-        return {"display": "flex", "margin": "6px 0"}, {"display": "none"}
-    return {"display": "none"}, {"display": "flex", "align-items": "center", "margin": "6px 0", "flex-wrap": "wrap"}
+        return {"display": "flex", "margin": "6px 0"}, {"display": "none"}, {"display": "none"}
+    if mode == "scatter3d":
+        return {"display": "flex", "margin": "6px 0"}, {"display": "flex", "margin": "6px 0"}, {"display": "none"}
+    return {"display": "none"}, {"display": "none"}, {"display": "flex", "align-items": "center", "margin": "6px 0", "flex-wrap": "wrap"}
 
 
 # ── Dynamic filter row management ─────────────────────────
@@ -2315,10 +2763,21 @@ def toggle_explorer_mode(mode):
     Output("div-explorer-filters", "children"),
     Input("btn-explorer-add-filter", "n_clicks"),
     Input({"type": "explorer-filter-remove", "index": ALL}, "n_clicks"),
+    Input({"type": "explorer-filter-col", "index": ALL}, "value"),
+    Input({"type": "explorer-filter-min", "index": ALL}, "value"),
+    Input({"type": "explorer-filter-max", "index": ALL}, "value"),
     State("store-explorer-filters", "data"),
+    State({"type": "explorer-filter-col", "index": ALL}, "id"),
     prevent_initial_call=True,
 )
-def manage_explorer_filters(add_clicks, remove_clicks_list, filters):
+def manage_explorer_filters(add_clicks, remove_clicks_list, column_values, min_values, max_values, filters, column_ids):
+    """Maintain filter rows and persist each row's editable values.
+
+    The filter store is the source consumed by ``on_generate_explorer``.  It
+    must therefore be synchronised on every dropdown/number edit, not merely
+    when rows are added or removed.
+    """
+    filters = list(filters or [])
     triggered = ctx.triggered_id
 
     # Remove filter row
@@ -2330,6 +2789,19 @@ def manage_explorer_filters(add_clicks, remove_clicks_list, filters):
     elif triggered == "btn-explorer-add-filter":
         new_idx = max([f.get("index", -1) for f in filters] + [-1]) + 1
         filters.append({"index": new_idx, "column": "", "min": None, "max": None})
+
+    # Persist fields edited in existing dynamic rows.  Pattern-matching inputs
+    # and ids have aligned ordering, so use the row's explicit index rather
+    # than relying on insertion order in the backing list.
+    else:
+        values_by_index = {
+            item["index"]: (column_values[pos], min_values[pos], max_values[pos])
+            for pos, item in enumerate(column_ids or [])
+        }
+        for item in filters:
+            if item.get("index") in values_by_index:
+                column, vmin, vmax = values_by_index[item["index"]]
+                item.update({"column": column or "", "min": vmin, "max": vmax})
 
     nums = _numeric_columns()
     col_opts = [{"label": c, "value": c} for c in nums]
@@ -2366,19 +2838,21 @@ def manage_explorer_filters(add_clicks, remove_clicks_list, filters):
     Input("btn-explorer-generate", "n_clicks"),
     State("radio-explorer-mode", "value"),
     State("explorer-x-var", "value"), State("explorer-y-var", "value"),
+    State("explorer-z-var", "value"),
     State("explorer-line-varx", "value"), State("explorer-line-vary", "value"),
     State("explorer-p1-x", "value"), State("explorer-p1-y", "value"),
     State("explorer-p2-x", "value"), State("explorer-p2-y", "value"),
     State("explorer-bins", "value"),
     State("explorer-xmin", "value"), State("explorer-xmax", "value"),
     State("explorer-ymin", "value"), State("explorer-ymax", "value"),
+    State("explorer-zmin", "value"), State("explorer-zmax", "value"),
     State("explorer-cluster-filter", "value"),
     State("store-explorer-filters", "data"),
     prevent_initial_call=True,
 )
-def on_generate_explorer(n, mode, xvar, yvar, lxvar, lyvar,
+def on_generate_explorer(n, mode, xvar, yvar, zvar, lxvar, lyvar,
                           p1x, p1y, p2x, p2y,
-                          bins, xmin, xmax, ymin, ymax,
+                          bins, xmin, xmax, ymin, ymax, zmin, zmax,
                           cluster_filter, filters):
     session = get_session()
     if not session.has_data():
@@ -2423,7 +2897,43 @@ def on_generate_explorer(n, mode, xvar, yvar, lxvar, lyvar,
             fig.update_yaxes(range=[ymin, ymax])
         return fig
 
-    # ── Mode B: 1D Line Histogram ──
+    # ── Mode B: 3D Scatter ──
+    if mode == "scatter3d":
+        if not all(column and column in df.columns for column in (xvar, yvar, zvar)):
+            return _build_empty_figure("Select valid X, Y and Z variables")
+        draw = df[[xvar, yvar, zvar] + (["foil_position"] if "foil_position" in df.columns else [])].dropna()
+        if draw.empty:
+            return _build_empty_figure("No finite events after filtering")
+        total = len(draw)
+        # Independent z-score normalisation is purely a display transform: it
+        # gives all three selected coordinates unit variance after the active
+        # filters, so an arbitrary unit scale cannot dominate the 3D view.
+        raw_means = draw[[xvar, yvar, zvar]].mean()
+        raw_stds = draw[[xvar, yvar, zvar]].std(ddof=0).replace(0, 1.0)
+        for column in (xvar, yvar, zvar):
+            draw.loc[:, column] = (draw[column] - raw_means[column]) / raw_stds[column]
+        if total > 60_000:
+            draw = draw.sample(60_000, random_state=25521)
+        fig = go.Figure()
+        if "foil_position" in draw.columns:
+            for foil, part in draw.groupby("foil_position", dropna=False):
+                label = f"foil {int(foil)}" if pd.notna(foil) else "unclassified"
+                fig.add_trace(go.Scatter3d(x=part[xvar], y=part[yvar], z=part[zvar], mode="markers", name=label,
+                    marker={"size": 1.8, "opacity": .42, "color": _FOIL_COLORS.get(int(foil), "#9aa3ad") if pd.notna(foil) else "#9aa3ad"},
+                    hovertemplate=f"{xvar}=%{{x:.4g}}<br>{yvar}=%{{y:.4g}}<br>{zvar}=%{{z:.4g}}<extra></extra>"))
+        else:
+            fig.add_trace(go.Scatter3d(x=draw[xvar], y=draw[yvar], z=draw[zvar], mode="markers", name="events",
+                marker={"size": 1.8, "opacity": .42, "color": "#356bb4"},
+                hovertemplate=f"{xvar}=%{{x:.4g}}<br>{yvar}=%{{y:.4g}}<br>{zvar}=%{{z:.4g}}<extra></extra>"))
+        scene = {"xaxis_title": f"{xvar} (normalized)", "yaxis_title": f"{yvar} (normalized)", "zaxis_title": f"{zvar} (normalized)", "aspectmode": "data"}
+        if xmin is not None and xmax is not None: scene["xaxis"] = {"range": [xmin, xmax]}
+        if ymin is not None and ymax is not None: scene["yaxis"] = {"range": [ymin, ymax]}
+        if zmin is not None and zmax is not None: scene["zaxis"] = {"range": [zmin, zmax]}
+        fig.update_layout(title=f"3D scatter (per-axis z-score): {xvar}, {yvar}, {zvar} ({len(draw):,}/{total:,} events)", template=_PLOTLY_TEMPLATE,
+            scene=scene, margin={"l": 0, "r": 0, "t": 48, "b": 0}, uirevision="explorer-3d")
+        return fig
+
+    # ── Mode C: 1D Line Histogram ──
     if not lxvar or not lyvar or lxvar not in df.columns or lyvar not in df.columns:
         return _build_empty_figure("Select valid line variables")
 

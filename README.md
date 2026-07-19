@@ -246,6 +246,23 @@ All configuration classes support dataclass features and can be customized:
 
 Default configuration instances are available as `DEFAULT_*_CONFIG`.
 
+## Calibration GUI: FP5D Flow and Z-space Lab
+
+The Dash GUI includes an independent **FP5D / Z-space Lab** alongside the
+existing sieve-plane labeling workflow. It never replaces legacy per-foil
+sieve clustering: it uses the measured focal-plane variables `x_fp`, `y_fp`,
+`x'_fp`, `y'_fp`, and `fr_ybpm` (ROOT aliases are recognised), applies smooth
+raster conditioning, builds five whitened latent coordinates `flow_z1..flow_z5`,
+and runs HDBSCAN in the complete 5D space.
+
+The lab can then construct `z3_local` (smoothly blended local shrinkage-LDA),
+`global_continuous_z3` (a single RBF-mixture chart), and
+`global_flattened_z3` (the continuous chart with smooth within-foil trend
+removal). Foil labels are a weak training signal for the Z field only; they are
+not a cut on the FP5D clustering input. The 3D viewer supports event points,
+opaque cluster centroids, or both, and exports its active view as a
+self-contained Plotly HTML for sharing.
+
 ## Default Parameters
 
 Key default parameters based on the original notebook:
