@@ -29,6 +29,7 @@ if _REPO_ROOT not in sys.path:
 import SHMS_Optics_calibration_tools as soc
 from SHMS_Optics_calibration_tools.config import MechanicalGridConfig, HDBSCANConfig
 from SHMS_Optics_calibration_tools.gui.state import get_session
+from SHMS_Optics_calibration_tools.coordinate_field import build_coordinate_field
 
 # ── colour palette ────────────────────────────────────────
 _FOIL_COLORS = {0: "#2196F3", 1: "#FF9800", 2: "#4CAF50"}
@@ -60,6 +61,102 @@ def _build_empty_figure(message: str = "Load data to begin") -> go.Figure:
     )
     fig.update_layout(template=_PLOTLY_TEMPLATE, margin={"l": 40, "r": 20, "t": 40, "b": 40})
     return fig
+
+
+def _build_coordinate_3d_figure(df: pd.DataFrame, x_col: str, y_col: str, z_col: str, color_col: str) -> go.Figure:
+    """Make a bounded, categorical-aware 3D Plotly diagnostic view."""
+    required = [x_col, y_col, z_col]
+    if any(not col or col not in df for col in required):
+        return _build_empty_figure("Build the coordinate field, then select three axes")
+    plot = df.dropna(subset=required).copy()
+    if len(plot) > 45_000:
+        plot = plot.sample(45_000, random_state=42)
+    if plot.empty:
+        return _build_empty_figure("No finite events for this coordinate projection")
+    hover = [c for c in ("foil_position", "cluster", "local_refined_cluster", "sieve_x", "sieve_y", "local_component") if c in plot]
+    fig = go.Figure()
+    if color_col in plot and not pd.api.types.is_numeric_dtype(plot[color_col]):
+        categories = plot[color_col].fillna("missing").astype(str)
+    elif color_col in plot and color_col in {"cluster", "local_refined_cluster", "foil_position", "local_component"}:
+        categories = plot[color_col].fillna(-1).astype(str)
+    else:
+        categories = None
+    if categories is not None:
+        for label in sorted(categories.unique(), key=str):
+            part = plot[categories == label]
+            fig.add_trace(go.Scatter3d(x=part[x_col], y=part[y_col], z=part[z_col], mode="markers", name=label,
+                         customdata=part[hover].to_numpy() if hover else None,
+                         hovertemplate="<br>".join([f"{name}=%{{customdata[{i}]}}" for i, name in enumerate(hover)]) + "<extra></extra>",
+                         marker={"size": 2.2, "opacity": .62}))
+    else:
+        marker = {"size": 2.2, "opacity": .62}
+        if color_col in plot:
+            marker.update({"color": plot[color_col], "colorscale": "Viridis", "showscale": True})
+        fig.add_trace(go.Scatter3d(x=plot[x_col], y=plot[y_col], z=plot[z_col], mode="markers", marker=marker,
+                     customdata=plot[hover].to_numpy() if hover else None,
+                     hovertemplate="<br>".join([f"{name}=%{{customdata[{i}]}}" for i, name in enumerate(hover)]) + "<extra></extra>"))
+    fig.update_layout(template=_PLOTLY_TEMPLATE, title=f"FP5D Coordinate Field: {x_col} / {y_col} / {z_col}",
+                      scene={"xaxis_title": x_col, "yaxis_title": y_col, "zaxis_title": z_col},
+                      margin={"l": 0, "r": 0, "t": 48, "b": 0}, legend={"itemsizing": "constant"})
+    return fig
+
+
+@callback(
+    Output("graph-coordinate-3d", "figure"),
+    Output("coordinate-field-status", "children"),
+    Output("coordinate-x-axis", "options"), Output("coordinate-y-axis", "options"),
+    Output("coordinate-z-axis", "options"), Output("coordinate-color", "options"),
+    Output("coordinate-x-axis", "value"), Output("coordinate-y-axis", "value"),
+    Output("coordinate-z-axis", "value"), Output("coordinate-color", "value"),
+    Input("btn-build-coordinate-field", "n_clicks"),
+    Input("coordinate-x-axis", "value"), Input("coordinate-y-axis", "value"),
+    Input("coordinate-z-axis", "value"), Input("coordinate-color", "value"),
+    prevent_initial_call=True,
+)
+def on_coordinate_field_change(build_clicks, x_col, y_col, z_col, color_col):
+    """Build coordinate fields from the active GUI data and render the 3D view."""
+    session = get_session()
+    if ctx.triggered_id == "btn-build-coordinate-field":
+        if not session.has_data():
+            return _build_empty_figure("Load data first"), "⚠️ Load ROOT data before building coordinates.", [], [], [], [], None, None, None, None
+        events = session.raw_df.copy()
+        # The GUI keeps labels per foil; attach those labels to the shared event table.
+        if session.has_clusters():
+            events["cluster"] = -1
+            for result in session.clustered_results.values():
+                clustered = result["df"]
+                events.loc[clustered.index, "cluster"] = clustered["cluster"]
+        try:
+            result = build_coordinate_field(events)
+        except ValueError as exc:
+            return _build_empty_figure(str(exc)), f"⚠️ {exc}", [], [], [], [], None, None, None, None
+        session.coordinate_df = result.df
+        session.coordinate_summary = result.summary
+        x_col, y_col, z_col = "fp5d_z1", "fp5d_z2", "fp5d_z3"
+        color_col = "local_refined_cluster" if "local_refined_cluster" in result.df else "foil_position"
+    elif session.coordinate_df is None:
+        return _build_empty_figure("Build the coordinate field first"), "", [], [], [], [], None, None, None, None
+
+    df = session.coordinate_df
+    numeric = [column for column in df.columns if pd.api.types.is_numeric_dtype(df[column])]
+    # Keep selectors focused on FP5D, derived coordinates, reconstructed geometry and labels.
+    preferred = [column for column in numeric if column.startswith(("fp5d_z", "local_")) or column in {
+        "sieve_x", "sieve_y", "P_gtr_y", "cluster", "foil_position"
+    }]
+    options = [{"label": column, "value": column} for column in (preferred or numeric)]
+    allowed = {option["value"] for option in options}
+    x_col = x_col if x_col in allowed else "fp5d_z1"
+    y_col = y_col if y_col in allowed else "fp5d_z2"
+    z_col = z_col if z_col in allowed else "fp5d_z3"
+    color_col = color_col if color_col in allowed else ("local_refined_cluster" if "local_refined_cluster" in allowed else x_col)
+    summary = session.coordinate_summary
+    status = (
+        f"✅ {summary.get('finite_fp5d_events', 0):,} finite FP5D events; "
+        f"{summary.get('local_components', 0)} local cells; "
+        f"{summary.get('conservative_reassignments', 0)} conservative reassignments."
+    )
+    return (_build_coordinate_3d_figure(df, x_col, y_col, z_col, color_col), status,
+            options, options, options, options, x_col, y_col, z_col, color_col)
 
 
 def _filtered_results_for_display(foil_filter: Optional[str] = None):

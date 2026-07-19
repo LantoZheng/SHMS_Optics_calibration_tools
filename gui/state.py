@@ -65,6 +65,8 @@ class SessionState:
     trace_point_lookup: dict[int, list[tuple[int, int, int]]] = field(default_factory=dict)
     grid_trace_lookup: dict[int, list[dict[str, Any]]] = field(default_factory=dict)
     current_foil_filter: str = "all"  # tracked so figure rebuilds respect foil choice
+    coordinate_df: Optional[pd.DataFrame] = None
+    coordinate_summary: dict[str, Any] = field(default_factory=dict)
 
     def push_undo(self, description: str, before: dict[str, Any]) -> None:
         """Record a snapshot before a mutation for undo support."""

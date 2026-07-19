@@ -272,6 +272,28 @@ The SHMS (Super High Momentum Spectrometer) is part of the experimental equipmen
 ### Sieve-Plane Projection Formula
 
 ```
+
+## Calibration GUI: FP5D Coordinate Lab
+
+Install the GUI extras and launch the local Dash application:
+
+```bash
+pip install -r SHMS_Optics_calibration_tools/requirements-gui.txt
+python -m SHMS_Optics_calibration_tools.gui
+```
+
+After loading ROOT data, open **FP5D Coordinate Lab**.  It uses the five
+measured coordinates `x_fp`, `y_fp`, `xp_fp`, `yp_fp`, and raster ADC (with
+the ROOT or normalized GUI column names accepted) to build `fp5d_z1` through
+`fp5d_z5` via robust scaling plus whitened PCA.  After GUI clustering has run,
+the tab also builds `local_z3` with shrinkage LDA within connected groups of
+nearby sieve clusters and shows the selected coordinates in a rotatable Plotly
+3D view.
+
+`local_z3` is a local diagnostic coordinate, not a globally comparable target
+coordinate: use it to inspect or conservatively refine overlapping branches in
+one sieve neighbourhood.  The tab never changes the GUI's clustering results;
+the `local_refined_cluster` column is retained separately for comparison.
 sieve_x = x + th * 253.0
 
 sieve_y = (-0.019 * dp + 0.00019 * dp² + 213 * ph + y)
